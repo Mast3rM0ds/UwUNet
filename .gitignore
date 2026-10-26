@@ -1,0 +1,37 @@
+# === Secrets / private keys ===
+certs/
+*.key
+*.pem
+
+# === Personal data & runtime state (SteamID, tokens, harvested traffic) ===
+data/
+
+# === Large binary / downloaded / third-party trees ===
+client2025/depot/
+tools/
+re/dumps/
+re/deco/
+re/logs/
+bin/node
+
+# === Built native shims (rebuilt from the .c sources that are committed) ===
+*.so
+*.o
+
+# === Compiled RE helper binaries (ELF; .c/.py sources are committed) ===
+re/freeze-*
+!re/freeze-*.c
+re/freeze-win
+re/freeze-win2
+re/uwu-patch
+re/refpin
+
+# === Symlinks into the local Steam install ===
+RecRoom_Data
+unitycrashhandler64.exe
+
+# === Misc ===
+node_modules/
+*.log
+run.out
+.DS_Store

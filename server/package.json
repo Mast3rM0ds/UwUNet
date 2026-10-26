@@ -1,0 +1,12 @@
+{
+  "name": "uwunet-server",
+  "version": "0.1.0",
+  "description": "UwUNet — community-hosted revival backend for Rec Room",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "harvest": "node src/harvest-proxy.ts"
+  },
+  "engines": { "node": ">=22" }
+}
