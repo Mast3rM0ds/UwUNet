@@ -2426,7 +2426,11 @@ async function rfProxy(
 // ---------------------------------------------------------------- dispatch
 async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, useTls: boolean) {
   const host = String(req.headers.host ?? "").toLowerCase();
-  const u = new URL(req.url ?? "/", `http://${host}`);
+  // Node 24's URL parser rejects an empty authority: `new URL("/", "http://")` throws, and an
+  // unhandled throw here takes the whole edge down. A header-less probe must not kill the
+  // server, so fall back to a placeholder authority for parsing only — routing still uses the
+  // real `host` captured above.
+  const u = new URL(req.url ?? "/", `http://${host || "localhost"}`);
   const p = u.pathname;
 
   let body = "";
@@ -2649,7 +2653,25 @@ const handleWsUpgrade = (req: http.IncomingMessage, socket: any, _head: Buffer) 
 };
 
 // ---- servers ----
-const httpServer = http.createServer((req, res) => dispatch(req, res, false));
+// Every request goes through this wrapper so a throw anywhere in dispatch (even before the
+// per-route try/catch — e.g. URL parsing) becomes a logged 500 for that one request instead of
+// an unhandled rejection that crash-loops the whole edge.
+const safeDispatch = (req: http.IncomingMessage, res: http.ServerResponse, useTls: boolean) =>
+  dispatch(req, res, useTls).catch((e) => {
+    log({ event: "dispatch-error", url: req.url, error: String((e && (e as Error).stack) || e) });
+    try {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    } catch { /* socket already gone */ }
+  });
+// Absolute last resort: never let a stray error or rejection take the process down.
+process.on("uncaughtException", (e) =>
+  log({ event: "uncaughtException", error: String((e && e.stack) || e) }),
+);
+process.on("unhandledRejection", (e) =>
+  log({ event: "unhandledRejection", error: String(e) }),
+);
+const httpServer = http.createServer((req, res) => safeDispatch(req, res, false));
 httpServer.on("upgrade", handleWsUpgrade);
 httpServer.listen(HTTP_PORT, "0.0.0.0", () =>
   console.log(`[uwunet] plain HTTP on :${HTTP_PORT}`),
@@ -2685,7 +2707,7 @@ const tlsServer = tls.createServer(
   },
   (plain: tls.TLSSocket) => {
     const s = new http.Server(function (req, res) {
-      void dispatch(req, res, true);
+      void safeDispatch(req, res, true);
     });
     s.on("upgrade", handleWsUpgrade);
     s.emit("connection", plain);
