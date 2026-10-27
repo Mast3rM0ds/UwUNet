@@ -26,12 +26,31 @@ mkdir -p "$LOG"
 # every rec.net host (ns/api/accounts/rooms/...) lands on us uniformly.
 PRELOAD="$UWU/lib/uwudns64.so:$UWU/lib/portrewriter.so"
 if [ "${EDGE_EXTERNAL:-0}" != "1" ]; then
-  pkill -f uwunet-edge 2>/dev/null
-  TLS_PORT=8443 HTTP_PORT=8460 node "$UWU/server/src/uwunet-edge.ts" > "$LOG/edge.log" 2>&1 &
-  echo "[run] edge up; *.rec.net -> 127.0.0.1:8443 via uwudns64 + portrewriter"
+  VPS_HOST="vps-caa6c6fd.vps.ovh.net"
+
+  # Stop a locally running edge, if present.
+  pkill -f '[u]wunet-edge.ts' 2>/dev/null || true
+
+  # Forward the local HTTPS edge port to the VPS.
+  socat TCP4-LISTEN:8443,bind=127.0.0.1,reuseaddr,fork \
+    "TCP4:${VPS_HOST}:8443" > "$LOG/forward-https.log" 2>&1 &
+  HTTPS_FORWARD_PID=$!
+
+  # Forward the local HTTP edge port to the VPS.
+  socat TCP4-LISTEN:8460,bind=127.0.0.1,reuseaddr,fork \
+    "TCP4:${VPS_HOST}:8460" > "$LOG/forward-http.log" 2>&1 &
+  HTTP_FORWARD_PID=$!
+
+  cleanup() {
+    kill "$HTTPS_FORWARD_PID" "$HTTP_FORWARD_PID" 2>/dev/null || true
+  }
+  trap cleanup EXIT INT TERM
+
+  echo "[run] forwarding local 8443 -> ${VPS_HOST}:8443"
+  echo "[run] forwarding local 8460 -> ${VPS_HOST}:8460"
   sleep 1
 else
-  echo "[run] using external edge; *.rec.net -> 127.0.0.1:8443 via uwudns64 + portrewriter"
+  echo "[run] using externally managed edge forwarding"
 fi
 
 cd "$BUILD"
