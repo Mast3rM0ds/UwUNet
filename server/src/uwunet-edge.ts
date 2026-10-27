@@ -292,32 +292,23 @@ button.ghost{background:transparent;border:1px solid #463a7a;margin-top:8px}
 #tok{word-break:break-all;color:#a99fd0;font-size:11px}
 </style></head><body><main>
 <h1>UwU<span>Net</span></h1>
-<p class=sub>rec room is dead. this is our replacement. keep it kind.</p>
-<form onsubmit="return doSignup(event)">
-<label>username</label><input id=u required pattern="[A-Za-z0-9_\-]{3,20}">
+<p class=sub>claim your account &mdash; give yourself a real username &amp; password. keep it kind.</p>
+<form onsubmit="return doClaim(event)">
+<label>your current in-game name (or SteamID)</label><input id=who required placeholder="Player1000000">
+<label>choose a username</label><input id=u required pattern="[A-Za-z0-9_\-]{3,20}" placeholder="3-20: letters, numbers, _ -">
 <label>password (8+ chars)</label><input id=p type=password required minlength=8>
-<label>email (optional)</label><input id=e type=email>
-<button>create account</button>
-<button type=button class=ghost onclick="return doLogin(event)">log in instead</button>
-</form><div id=out></div><div id=tok></div></main>
+<label>current password (only if you claimed before)</label><input id=cp type=password>
+<button>claim account</button>
+</form><div id=out></div>
+<p class=sub style="margin-top:16px">open Rec Room once first so your account exists &mdash; it shows your current name (Player&hellip;). enter that here, pick a username, then relaunch.</p></main>
 <script>
-const out=document.getElementById('out'),tok=document.getElementById('tok');
-async function call(path,body){
-  const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+const out=document.getElementById('out');
+async function doClaim(e){e.preventDefault();out.textContent='working...';out.id='';
+  const r=await fetch('/uwunet/claim',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({account:who.value.trim(),username:u.value.trim(),password:p.value,currentPassword:cp.value})});
   const j=await r.json().catch(()=>({}));
-  if(!r.ok){out.textContent=j.error_description||j.Error||'error '+r.status;out.className='';return null}
-  return j;
-}
-async function doSignup(e){e.preventDefault();out.textContent='...';
-  const j=await call('/Auth/connect/signup',{username:u.value,password:p.value,email:e.value});
-  if(!j)return false;
-  out.textContent='account '+j.Id+' created — you are signed in';
-  out.id='ok';tok.textContent='access_token: '+j.access_token;return false}
-async function doLogin(e){e.preventDefault();out.textContent='...';
-  const j=await call('/Auth/connect/token',{grant_type:'password',username:u.value,password:p.value});
-  if(!j)return false;
-  out.textContent='welcome back, '+j.username;
-  out.className='';out.id='ok';tok.textContent='access_token: '+j.access_token;return false}
+  if(!r.ok){out.textContent=j.Error||('error '+r.status);out.id='';return false}
+  out.id='ok';out.textContent='done! you are now '+j.username+'. relaunch Rec Room to see your new name.';return false}
 </script></body></html>`;
 
 // RecNet nameserver service-discovery map. GET ns.rec.net/ returns this so the
@@ -2156,6 +2147,55 @@ route("POST", "/Auth/connect/signup", async (c) => {
 });
 route("POST", "/Accounts/account", async (c) => {
   return await signup(c);
+});
+
+// UwUNet account portal: CLAIM an existing (Steam-created) account — give it a real username
+// and a password. The game authenticates through Steam and auto-makes a `Player<id>` account,
+// so we RENAME that account in place (keeping its numeric Id + the Steam link in
+// PlatformType/PlatformId) rather than creating a new, unlinked one the game would never log
+// into. First claim sets the password; changing a claimed account's name/password after that
+// requires its current password, so a name can't be hijacked. The display name updates in-game
+// on the next launch (login resolves the same account by Steam id / cached account id).
+route("POST", "/uwunet/claim", async (c) => {
+  const b = await parseBodyJson(c);
+  const who = String(b.account ?? b.current ?? "").trim();
+  const username = String(b.username ?? "").trim();
+  const password = String(b.password ?? "");
+  const currentPassword = String(b.currentPassword ?? b.current_password ?? "");
+  // Resolve the account by its current in-game name (Player####), numeric id, or SteamID64.
+  const u =
+    db.users[who.toLowerCase()] ??
+    (/^\d+$/.test(who) ? userById(Number(who)) : null) ??
+    Object.values(db.users).find((x) => x.PlatformId === who) ??
+    null;
+  if (!u) {
+    return c.send(404, {
+      Error: "No account matches that. Use the name the game shows you (e.g. Player1000000) or your SteamID64.",
+    });
+  }
+  if (username.length < 3 || username.length > 20 || !/^[A-Za-z0-9_-]+$/.test(username)) {
+    return c.send(400, { Error: "Username must be 3-20 characters: letters, numbers, _ or -." });
+  }
+  if (password.length < 8) return c.send(400, { Error: "Password must be at least 8 characters." });
+  const taken = db.users[username.toLowerCase()];
+  if (taken && taken.Id !== u.Id) return c.send(409, { Error: "That username is already taken." });
+  // Already claimed? Require the current password to change it.
+  if (u.PwHashB64 && hashPw(currentPassword, Buffer.from(u.SaltB64, "base64")) !== u.PwHashB64) {
+    return c.send(403, { Error: "This account is already claimed — enter its current password to change it." });
+  }
+  const oldKey = u.Username.toLowerCase();
+  u.Username = username;
+  u.DisplayName = username;
+  u.SaltB64 = crypto.randomBytes(16).toString("base64");
+  u.PwHashB64 = hashPw(password, Buffer.from(u.SaltB64, "base64"));
+  if (oldKey !== username.toLowerCase()) {
+    delete db.users[oldKey];
+    db.users[username.toLowerCase()] = u;
+    for (const [rt, name] of Object.entries(db.refresh)) if (name === oldKey) db.refresh[rt] = username.toLowerCase();
+  }
+  saveDb();
+  log({ event: "account-claimed", id: u.Id, username });
+  c.send(200, { ok: true, accountId: u.Id, username });
 });
 async function signup(c: Ctx) {
   const b = await parseBodyJson(c);
