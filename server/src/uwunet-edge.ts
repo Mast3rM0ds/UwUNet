@@ -539,7 +539,7 @@ route("POST", "/connect/token", async (c) => {
     // presence stays in sync. Default 0 only when the client sends nothing.
     const dc = Number(b.device_class ?? b.deviceClass ?? 0);
     deviceClassById.set(uid, Number.isFinite(dc) ? dc : 0);
-    if (!presenceById.has(uid)) presenceById.set(uid, orientationRoomInstance());
+    if (!presenceById.has(uid)) presenceById.set(uid, defaultSpawnInstance(uid));
     const at = mintAccessToken(u, ver);
     const rt = newToken("rt", u.Id);
     db.refresh[rt] = u.Username.toLowerCase();
@@ -768,6 +768,47 @@ const orientationRoomInstance = () => {
     EncryptVoiceChat: false,
   };
 };
+// When UWU_SPAWN=dorm, a fresh launch is seeded into the player's OWN DORM instead of
+// Orientation. The Orientation tutorial scene (Theater Department) never spawns the local
+// player rig in screen mode — no avatar skeleton, no camera, no controls, just a black
+// screen with audible menu, reproduced identically on Linux/Proton and native Windows.
+// The dorm is an ordinary room whose spawn path is the proven dormMatchmake one, and it is
+// the room the user actually wants. Default (unset) stays on Orientation.
+const SPAWN_IN_DORM = process.env.UWU_SPAWN === "dorm";
+const photonRegion = () => {
+  try {
+    const pf = path.join(DATA, "photon.json");
+    if (existsSync(pf)) return (JSON.parse(readFileSync(pf, "utf8")).region as string) || "usw";
+  } catch { /* default */ }
+  return "usw";
+};
+// The same dorm roomInstance dormMatchmake returns, as a reusable builder.
+const dormRoomInstance = (id: number, username: string) => {
+  const region = photonRegion();
+  return {
+    roomInstanceId: id,
+    roomId: id,
+    subRoomId: 1,
+    roomInstanceType: 1, // Dormroom
+    location: DORM_SCENE,
+    dataBlob: "",
+    eventId: 0,
+    clubId: 0,
+    roomCode: "",
+    photonRegion: region,
+    photonRegionId: region,
+    photonRoomId: `uwu-dorm-${id}`,
+    name: `@${username}'s Dorm`,
+    maxCapacity: 4,
+    isFull: false,
+    isPrivate: true,
+    isInProgress: false,
+    EncryptVoiceChat: false,
+  };
+};
+// The room a fresh launch is seeded into: Orientation by default, the dorm under UWU_SPAWN=dorm.
+const defaultSpawnInstance = (id: number) =>
+  SPAWN_IN_DORM ? dormRoomInstance(id, userById(id)?.Username ?? `Player${id}`) : orientationRoomInstance();
 const isOrientationPresence = (p: unknown) =>
   !!p && typeof p === "object" && (p as Record<string, unknown>).roomInstanceId === ORIENTATION_INSTANCE_ID;
 
@@ -778,14 +819,16 @@ route("POST", "/player/login", (c) => {
   // Seed the Orientation presence so the first heartbeat echoes roomInstanceId -2 and the
   // client (locally loading Orientation) stays in sync. Don't clobber a live room presence
   // set by a later matchmake.
-  if (!presenceById.has(id)) presenceById.set(id, orientationRoomInstance());
+  if (!presenceById.has(id)) presenceById.set(id, defaultSpawnInstance(id));
   c.empty(); // RecFlare acks an EMPTY body here, NOT a PlayerDto
 });
 route("POST", "/player/logout", (c) => {           // empty ack
   const id = selfPlayerId(c);
-  // The client fires a spurious logout right after the Orientation seed; clearing presence
-  // then would wipe the -2 seed and bounce the new player out. Preserve the Orientation seed.
-  if (!isOrientationPresence(presenceById.get(id))) {
+  // The client fires a spurious logout right after the launch seed; clearing presence then
+  // would wipe it and bounce the player out. Preserve the Orientation seed — and, under the
+  // dorm experiment, the seeded dorm presence too.
+  const keep = isOrientationPresence(presenceById.get(id)) || (SPAWN_IN_DORM && presenceById.has(id));
+  if (!keep) {
     presenceById.delete(id);
     loginLockById.delete(id);
   }
@@ -942,6 +985,50 @@ route("POST", "/matchmake/none", noneMatchmake);
 // The client reports how its Photon join went; accepted and ignored (empty 200). A 404 here
 // makes matchmaking treat the join as failed and re-matchmake in a loop.
 route("POST", "/roominstance/**/reportjoinresult", (c) => c.empty());
+
+// GET /photon_access_token — the permission table + Photon credentials the client needs to
+// SPAWN into a room (RecFlare apps/rooms/src/rooms.app.ts). 404ing this was the dorm's
+// `FailedToSpawnPlayer (Code 8700)`: the client awaits it inside JoinRoomLoadWithPhoton, and a
+// faulted fetch aborts the whole room load. PhotonAccessToken is always "" — Photon Cloud
+// (ours, like RecFlare's) accepts an empty token; the real service signed it with a secret we
+// don't have. The permission table decides who may build; it does not gate the spawn, but the
+// client reads the whole table from this one response so we serve it faithfully.
+const ROLE_NONE = 0, ROLE_COOWNER = 30, ROLE_CREATOR = 255;
+const PERMISSION_ROLES = [ROLE_NONE, 10, 20, ROLE_COOWNER, ROLE_CREATOR]; // None,Host,Moderator,CoOwner,Creator
+const BUILD_PERMISSIONS = [
+  "CAN_USE_MAKER_PEN", "CAN_USE_ROOM_RESET_BUTTON", "CAN_USE_DELETE_ALL_BUTTON",
+  "CAN_SAVE_INVENTIONS", "CAN_SPAWN_INVENTIONS", "CAN_USE_PLAY_GIZMOS_TOGGLE",
+];
+const buildsByDefault = (role: number) => role >= ROLE_COOWNER; // managers (co-owner and up) may build
+const photonAccessTokenDto = (roomInstanceId: number | null, role: number) => {
+  const row = (Permission: string, Role: number, Value: string, Override: boolean) =>
+    ({ Override, Permission, Role, Type: 0, Value });
+  const permissions: Array<ReturnType<typeof row>> = [];
+  if (buildsByDefault(role)) {
+    // A manager (the dorm's own creator): the whole table, a row per (permission, role tier).
+    for (const at of PERMISSION_ROLES)
+      for (const name of BUILD_PERMISSIONS)
+        permissions.push(row(name, at, buildsByDefault(at) ? "True" : "False", false));
+  } else {
+    // Everyone else: their own values only, at Role 0 and (if non-zero) their role. A visitor,
+    // host or moderator builds nothing by default, so every value is "False".
+    for (const at of role === ROLE_NONE ? [ROLE_NONE] : [ROLE_NONE, role])
+      for (const name of BUILD_PERMISSIONS)
+        permissions.push(row(name, at, "False", true));
+  }
+  return { Permissions: permissions, PhotonAccessToken: "", RoomInstanceId: roomInstanceId };
+};
+route("GET", "/photon_access_token", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  const presence = presenceById.get(id) as Record<string, unknown> | undefined;
+  const roomInstanceId =
+    presence && typeof presence.roomInstanceId === "number" ? (presence.roomInstanceId as number) : null;
+  const roomId = presence && typeof presence.roomId === "number" ? (presence.roomId as number) : null;
+  // The caller owns their own dorm (roomId === their account id) → Creator; otherwise a visitor.
+  const role = roomId === id ? ROLE_CREATOR : ROLE_NONE;
+  c.send(200, photonAccessTokenDto(roomInstanceId, role));
+});
 
 // --- rooms.rec.net: the room object the client loads after matchmake ---
 // GET /dormroom/me — returns the caller's dorm ROOM ID as a BARE NUMBER (RecFlare's
@@ -1195,9 +1282,27 @@ const storedOutfit = () => ({
   Accessibility: 0,
   Slot: 0,
 });
+// Per-player worn outfit (slot 0). The client builds/normalizes its avatar on spawn and
+// PUTs the result here; a 404 on that write left the avatar unestablished (no skeleton, so
+// the head-pivot camera renders black). We store it and read it back, like RecFlare's
+// `outfit` table. Nothing saved yet → the default outfit.
+const storedOutfitById = new Map<number, Record<string, unknown>>();
 route("GET", "/outfits/me", (c) => {
   if (!c.authUser) return c.send(401, {});
-  c.send(200, storedOutfit());
+  c.send(200, storedOutfitById.get(selfPlayerId(c)) ?? storedOutfit());
+});
+// Save the caller's outfit. RecFlare stores the body verbatim in the slot it names (slot 0 =
+// worn, what GET reads) and answers the base envelope WITHOUT a Value — the outfit is not
+// echoed. Lenient on an unparseable body: still ack, so the avatar apply never stalls here.
+route("PUT", "/outfits/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  try {
+    const body = c.body ? (JSON.parse(c.body) as Record<string, unknown>) : null;
+    if (body && (typeof body.Slot !== "number" || body.Slot === 0)) {
+      storedOutfitById.set(selfPlayerId(c), body);
+    }
+  } catch { /* unparseable — still ack */ }
+  c.send(200, { Success: true, Error: null, error_id: null });
 });
 
 // moderation: "not blocked" / "not a referee".
