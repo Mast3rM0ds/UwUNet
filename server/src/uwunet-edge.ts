@@ -438,11 +438,14 @@ const dormRoomDto = (id: number, username: string) => ({
 // (404 -> "Failed to connect to RecNet"). This shape was accepted (no
 // "Malformed Response"); keep it.
 route("GET", "/api/versioncheck/v4", (c) => {
+  // RecFlare's live shape (recorded from a real patched-client boot): a bare
+  // status object. The old ClientForceUpgrade shape was never accepted by the
+  // 2025 client's parser.
   c.send(200, {
-    ClientForceUpgrade: false,
-    ClientOptionalUpgrade: false,
-    LatestVersion: c.query.get("v") ?? "20250718.01",
-    MinimumVersion: "20250718.01",
+    VersionStatus: 0,
+    UpdateNotificationStage: 0,
+    IsVersionIslanded: false,
+    IsCrossPlayDisabled: false,
   });
 });
 
@@ -1127,6 +1130,416 @@ route("GET", "/api/keepsakes/rooms/{roomId}", (c) => {
   c.res.end();
 });
 
+// ---- post-login wave 2 (shapes mirrored from RecFlare's workers+tests) ----
+// MUST sit before the /rooms/** catch-all below — dispatch picks the FIRST matching
+// route, and that catch-all would swallow every rooms path registered after it.
+
+// --- rooms.rec.net: my-rooms / queues ---
+// `*by/me` lists answer a BARE array of RoomDto. A fresh account owns only its auto-
+// provisioned dorm, which `ownedby/me` deliberately drops (RecFlare apps/rooms:
+// rooms.app.ts "/rooms/ownedby/me" — dorm excluded), and has never visited another
+// room (no interaction rows), so visitedby/me is [] too. We only ever synthesize
+// dorms, so both stay [] here.
+route("GET", "/rooms/ownedby/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+route("GET", "/rooms/visitedby/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+// No instance queue yet → always empty (RecFlare apps/match match.app.ts: /rooms/requiring/*).
+route("GET", "/rooms/requiring/developer", (c) => c.send(200, []));
+route("GET", "/rooms/requiring/rrplus", (c) => c.send(200, []));
+
+// Room browse filter chips (RecFlare apps/api routes/rooms.ts "/api/rooms/v1/filters").
+// The client deserializes an OBJECT, not an array; TrendingFilters is a real list.
+route("GET", "/api/rooms/v1/filters", (c) =>
+  c.send(200, {
+    PinnedFilters: [
+      "recroomoriginal", "community", "featured", "quest", "pvp", "hangout",
+      "game", "art", "store", "tutorial", "fandom", "performance", "action", "horror",
+    ],
+    PopularFilters: ["pvp", "quest", "game", "hangout", "art"],
+    TrendingFilters: ["roleplay", "nomp", "rp", "casual", "fun", "action", "military", "sports"],
+  }));
+
+// --- discovery.rec.net page sources ---
+// `{type}` IS the filename: static/<type>.json served verbatim (RecFlare apps/discovery
+// discovery.app.ts "/sections/pagesource/:type"). With Discovery.UseNewDiscoveryServerAPI
+// the client asks this instead of the embedded-config gameconfigs. File missing → 404,
+// like the reference's unpublished names. The body is the bare ARRAY with camelCase
+// fields — NOT the { pageSource, sections } wrapper the old game configs wrapped it in.
+route("GET", "/sections/pagesource/{type}", (c) => {
+  const type = c.path.split("/").pop() ?? "";
+  if (!/^[A-Za-z0-9_-]+$/.test(type)) return c.send(404, {});
+  const body = readStatic(`${type}.json`, null);
+  if (body === null) return c.send(404, {});
+  c.send(200, body);
+});
+
+// --- econ.rec.net: store + RR+ ---
+// Gift-drop storefront: serves sf{id}.json via assets (RecFlare econ.app.ts
+// "/api/storefronts/v3/giftdropstore/:id"). Our build (20250718.01) is a 2025 client,
+// so storefront 3 reads the 2025 store dump sf3-2025.json; other ids try sf{id}-2025
+// then plain sf{id}. No capture → 404.
+route("GET", "/api/storefronts/v3/giftdropstore/{id}", (c) => {
+  const id = c.path.split("/").pop() ?? "";
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) return c.send(404, {});
+  const body =
+    readStatic(`storefronts/sf${id}-2025.json`, null) ??
+    readStatic(`storefronts/sf${id}.json`, null);
+  if (body === null) return c.send(404, {});
+  c.send(200, body);
+});
+// RR+ sign-up bonus: fixed numbers (RecFlare econ.app.ts "/api/CampusCard/v1/SignUpBonus").
+route("GET", "/api/CampusCard/v1/SignUpBonus", (c) =>
+  c.send(200, { RRPlusSignUpBonusId: 3, MinFreeItemsPrice: 6000, MaxFreeItemsPrice: 10000 }));
+// The caller's RR+ subscription. No labels carry it here → `{}` = "not subscribed"
+// (RecFlare econ.app.ts POST "/api/CampusCard/v1/UpdateAndGetSubscription"; auth is
+// OPTIONAL there — a 401 would stall the client's load, so none is sent).
+route("POST", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
+// 2025 builds: the season read is a bare [] (RecFlare "/api/subscriptionseasons/v1/
+// seasons/current" serves [] to any build below 20260323 — ours is 20250718.01).
+route("GET", "/api/subscriptionseasons/v1/seasons/current", (c) => c.send(200, []));
+
+// --- images / chat privacy ---
+// The photo-tagging preference is ONE key in the player-settings bag, served as a BARE
+// integer (RecFlare apps/api routes/images.ts "/api/players/v1/playerPhotoTaggingSetting"
+// — an enum ordinal the client defines; 0 until the player sets one).
+route("GET", "/api/players/v1/playerPhotoTaggingSetting", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, 0);
+});
+route("PUT", "/api/players/v1/playerPhotoTaggingSetting", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, 0); // nothing persisted — answer the (unset) stored value
+});
+// Named-image catalog (RecFlare apps/api routes/images.ts "/api/images/v2/named").
+route("GET", "/api/images/v2/named", (c) => c.send(200, []));
+// Who may DM the caller / add them to a group chat: enum by NUMBER (0 Friends·1
+// Favorites·2 NoOne), keyed by the TOKEN's player id, defaulting to Friends for both —
+// exactly what a player who never set them reads (RecFlare apps/chat chat.app.ts).
+route("GET", "/thread/chatPrivacySetting", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, {
+    playerId: selfPlayerId(c),
+    directMessagePrivacySetting: 0,
+    groupChatPrivacySetting: 0,
+  });
+});
+
+// --- api.rec.net monolith surface ---
+// Online-friend count (RecFlare apps/api routes/social.ts "/api/messages/v1/
+// friendOnlineStatus": { success, value: { FriendsOnlineCount } }); no friends graph → 0.
+route("POST", "/api/messages/v1/friendOnlineStatus", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { success: true, value: { FriendsOnlineCount: 0 } });
+});
+// External platform invite referrers (NOT in RecFlare — GUESSED [] for a fresh account;
+// the client 404-tolerated this before, so it has an empty-list path).
+route("POST", "/api/externalfriendinvite/v1/getplatformreferrers", (c) => c.send(200, []));
+// Influencer partner program (RecFlare econ.app.ts "/api/influencerpartnerprogram/
+// influencers"): { InfluencerIds, ContinuationToken } — an object, not a bare array.
+route("GET", "/api/influencerpartnerprogram/influencers", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { InfluencerIds: [], ContinuationToken: null });
+});
+
+// --- lists.rec.net ---
+// One discovery ROW's contents (RecFlare lists.app.ts "/algorithmiclists/:list"): the
+// envelope is { Type: echoed?type=, Entities: [{Id:"str", Context:null}] }, and a row with
+// nothing behind it is a 200 with NO entities (a 404 renders as a failed carousel; an
+// empty one is hidden — lists.test.ts:890). Nothing ranks here, so even HotList is empty.
+route("GET", "/algorithmiclists/{list}", (c) => {
+  const t = Number.parseInt(c.query.get("type") ?? "", 10);
+  c.send(200, { Type: Number.isInteger(t) ? t : 0, Entities: [] });
+});
+// One curated list (RecFlare lists: curated-lists.ts + lists.app.ts "/curatedlists").
+// Params: creatorAccountId&type&name. Order: a capture matching the name, a RESERVED
+// `__`-prefixed list served empty, the page default for the type when NO name was given,
+// else an empty placeholder (anything other than "a list" breaks the client). ListId is
+// a NUMBER on the wire even though 64-bit.
+const curatedLists = readStatic("curated-lists.json", []) as Array<Record<string, unknown>>;
+const CURATED_DEFAULT_IMAGE = "DefaultRoomImage.jpg";
+const CURATED_PLACEHOLDER_IMAGE = "DefaultListImage.jpg";
+const CURATED_PLACEHOLDER_CREATED_AT = "2026-08-24T18:44:52.438Z";
+const curatedListPlaceholder = (creator: number, type: number, name: string) => ({
+  ListId: 1,
+  CreatorAccountId: creator,
+  Name: name,
+  Description: null,
+  ImageName: CURATED_PLACEHOLDER_IMAGE,
+  Type: type,
+  ItemIds: [] as Array<unknown>,
+  Accessibility: 0,
+  CreatedAt: CURATED_PLACEHOLDER_CREATED_AT,
+});
+route("GET", "/curatedlists", (c) => {
+  const typeRaw = Number.parseInt(c.query.get("type") ?? "", 10);
+  const type = Number.isInteger(typeRaw) ? typeRaw : 0;
+  const creatorId = Number.parseInt(c.query.get("creatorAccountId") ?? "", 10) || 0;
+  const name = c.query.get("name") ?? "";
+  const key = name.toLowerCase();
+  const hit =
+    key !== "" ? curatedLists.find((l) => String(l.Name).toLowerCase() === key) : undefined;
+  let list: Record<string, unknown>;
+  if (hit) {
+    list = hit;
+  } else if (name.startsWith("__")) {
+    // Reserved playlist nobody owns yet: served EMPTY, room image, Accessibility 1.
+    list = {
+      ListId: 0,
+      CreatorAccountId: creatorId,
+      Name: name,
+      Description: null,
+      ImageName: CURATED_DEFAULT_IMAGE,
+      Type: type,
+      ItemIds: [],
+      Accessibility: 1,
+      CreatedAt: new Date(0).toISOString(),
+    };
+  } else if (name === "") {
+    // No list named: the page default for the type — the first capture there is.
+    if (curatedLists.length > 0) {
+      list = curatedLists[0];
+    } else {
+      list = curatedListPlaceholder(creatorId, type, name);
+    }
+  } else {
+    // No such list: a well-formed but EMPTY placeholder — a {} or 404 breaks the client.
+    list = curatedListPlaceholder(creatorId, type, name);
+  }
+  const out = JSON.stringify(list).replace(/"ListId":"(\d+)"/g, '"ListId":$1');
+  const buf = Buffer.from(out, "utf8");
+  c.res.setHeader("content-type", "application/json; charset=utf-8");
+  c.res.setHeader("x-uwunet", "uwunet");
+  c.res.writeHead(200);
+  c.res.end(buf);
+});
+
+// --- community board (RecFlare apps/api routes/gameplay.ts "/api/communityboard/v2/
+// current" — the bundled static blob, verbatim, same for everybody, no auth) ---
+route("GET", "/api/communityboard/v2/current", (c) => {
+  const board = readStatic("community-board.json", null);
+  if (board === null) return c.send(200, {});
+  c.send(200, board);
+});
+
+// --- cards / accounts ---
+// No external channels linked → [] (RecFlare apps/api routes/account.ts
+// "/iam/me/channels/:type"); the {type} is accepted and not inspected.
+route("GET", "/iam/me/channels/{type}", (c) => c.send(200, []));
+
+// --- econ: inventory stubs (all [] for an account that has bought nothing) ---
+route("GET", "/api/consumables/v2/getUnlocked", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+route("GET", "/api/equipment/v2/getUnlocked", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+// Pending game rewards (RecFlare econ.app.ts "/api/gamerewards/v1/pending").
+route("GET", "/api/gamerewards/v1/pending", (c) => c.send(200, []));
+// Every key the caller holds across all rooms (RecFlare econ.app.ts
+// "/api/roomkeys/v1/mine") — none bought/awarded → [].
+route("GET", "/api/roomkeys/v1/mine", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+// Room-currency balances by room: empty stub (RecFlare econ.app.ts
+// "/api/roomcurrencies/v1/getAllBalances").
+route("GET", "/api/roomcurrencies/v1/getAllBalances", (c) => c.send(200, []));
+// The caller's own holdings of a room's consumables (RecFlare econ.app.ts
+// ".../roomConsumable/room/:roomId/me": a bare array — a bare array; none → []).
+route("GET", "/api/roomconsumables/v1/roomConsumable/room/{roomId}/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+// Objectives progress: the bundled default verbatim, no auth (RecFlare econ.app.ts
+// "/api/objectives/v1/myprogress", apps/econ/static/my-progress.json).
+route("GET", "/api/objectives/v1/myprogress", (c) => {
+  const p = readStatic("my-progress.json", null);
+  if (p === null) return c.send(200, { Objectives: [], ObjectiveGroups: [] });
+  c.send(200, p);
+});
+// Player events: created + RSVPs (RecFlare apps/api openapi.ts PlayerEventsAll = the
+// envelope {Created, Responses}) — none of either for a fresh account.
+route("GET", "/api/playerevents/v1/all", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { Created: [], Responses: [] });
+});
+// Speech-to-text config; Enabled:false here, Key/Region still present (RecFlare apps/api
+// routes/config.ts "/api/config/v1/azurespeech").
+route("GET", "/api/config/v1/azurespeech", (c) =>
+  c.send(200, { Key: "dce8de5b297747d9b5bddcc7f19e8c5b", Region: "eastus", Enabled: false }));
+// Voice-moderation vendor credentials (RecFlare apps/moderation moderation.app.ts
+// "/voice/config") — empty means "voice moderation off", but both keys must be present
+// STRINGS; a null trips the client's parser. AccountId is a STRING even though it reads
+// numeric.
+route("GET", "/voice/config", (c) => c.send(200, { AccountId: "", ApiKey: "" }));
+
+// --- events / campaigns / circuits ---
+// Purchase campaigns (RecFlare apps/commerce "/purchasecampaign/allcurrent/v2"): none.
+route("GET", "/purchasecampaign/allcurrent/v2", (c) => c.send(200, []));
+// Maker Pen circuit palettes (RecFlare apps/api routes/gameplay.ts
+// "/api/CircuitChipLists/:list"): nothing records favourites → always []; an unknown
+// palette name is [] too, NOT a 404 (a 404 shows as a failed palette).
+route("GET", "/api/CircuitChipLists/{list}", (c) => c.send(200, []));
+// The active progression event: a BARE event id (RecFlare apps/api routes/progression.ts
+// "/api/progressionEvents/active" stub = 18). A 404 would stall the load.
+route("GET", "/api/progressionEvents/active", (c) => c.send(200, 18));
+
+// One progression event's definition (RecFlare apps/api routes/progression.ts
+// "/api/progressionEvents/event/:id{[0-9]+}"). The archived official event, verbatim from
+// static/progression-events/ (copied from the reference's apps/api/static archive — ids
+// 2-9 and 12-18; 1, 4, 10, 11 are gaps in the reference archive too).
+// Served AS RAW TEXT, not parsed + re-stringified: a keepsake room's RoomId is a 64-bit
+// number (8364812036745705361) that a JS round-trip rounds to a different room. 404 for an
+// id the archive does not hold (EMPTY body — c.body(null, 404), not a JSON error). No auth:
+// it is the same record for everybody.
+const rawStaticText = (name: string): string | null => {
+  try {
+    return readFileSync(path.join(STATIC, name), "utf8");
+  } catch {
+    return null;
+  }
+};
+const PROGRESSION_EVENTS: Array<[number, string]> = [
+  [2, "Coming_in_Hot_Progression_Event_Alpha_EventId_2.json"],
+  [3, "Rec_Room_EventId_3.json"],
+  [5, "Progression_Event_Alpha_Repeat_EventId_5.json"],
+  [6, "Invasion_EventId_6.json"],
+  [7, "Science_Party_EventId_7.json"],
+  [8, "Base_Event_EventId_8.json"],
+  [9, "Invasion_2_EventId_9.json"],
+  [12, "Science_Experiment_Restoration_EventId_12.json"],
+  [13, "Anime_Season_EventId_13.json"],
+  [14, "Summer_Party_EventId_14.json"],
+  [15, "Medieval_Season_EventId_15.json"],
+  [16, "Treat_Collection_Challenge_EventId_16.json"],
+  [17, "Tricks_Challenge_EventId_17.json"],
+  [18, "Yetis_Challenge_EventId_18.json"],
+];
+const progressionEventById = new Map(PROGRESSION_EVENTS);
+route("GET", "/api/progressionEvents/event/{id}", (c) => {
+  const id = Number.parseInt(c.path.split("/").pop() ?? "", 10);
+  const file = progressionEventById.get(id);
+  const text = file ? rawStaticText(`progression-events/${file}`) : null;
+  if (text === null) {
+    // 404 with NO body (the reference's `c.body(null, 404)`), not a JSON error object.
+    c.res.setHeader("content-length", "0");
+    c.res.writeHead(404);
+    c.res.end();
+    return;
+  }
+  c.res.setHeader("content-type", "application/json; charset=utf-8");
+  c.res.setHeader("x-uwunet", "uwunet");
+  c.res.setHeader("content-length", String(Buffer.byteLength(text, "utf8")));
+  c.res.writeHead(200);
+  c.res.end(text);
+});
+// The caller's progress through one progression event (same route, "/record/:id{[0-9]+}").
+// STUB like the reference: every counter 0 for any id, echoing the id requested — nothing
+// tracks progress through an event here either (the /active stub above is bare 18). Auth-
+// gated because the record is the CALLER's and the path names no player.
+route("GET", "/api/progressionEvents/record/{id}", (c) => {
+  if (!c.authUser) return c.send(401, {}); // reference: 401 with empty body
+  c.send(200, {
+    AccountId: selfPlayerId(c),
+    ProgressionEventId: Number.parseInt(c.path.split("/").pop() ?? "", 10) || 0,
+    Xp: 0,
+    GameMinutesToday: 0,
+    RewardsCollected: 0,
+    BonusRewardsCollected: 0,
+    XpBoostLastPurchasedAt: null,
+    PremiumRewardsCollected: 0,
+    LimitedRewardCollectionState: 0,
+  });
+});
+
+// --- clubs.rec.net ---
+// No home club: the client EXPECTS a 404 here and errors on an empty object (RecFlare
+// apps/clubs "/club/home/me" GET — the bare club when set, c.notFound() otherwise).
+route("GET", "/club/home/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  // RecFlare 404s a home club with {"success":false,"error":{"message":"not found"}}.
+  c.send(404, { success: false, error: { message: "not found" } });
+});
+
+// --- moderation: vote-to-kick reasons (RecFlare apps/api routes/moderation.ts
+// VOTE_TO_KICK_REASONS — the order IS the render order; hate, sexual, griefing, conduct) ---
+route("GET", "/api/PlayerReporting/v1/voteToKickReasons", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, [
+    { Reason: "Discriminatory language", ReportCategory: 102 },
+    { Reason: "Discriminatory behavior", ReportCategory: 102 },
+    { Reason: "Threats or encouraging suicide", ReportCategory: 102 },
+    { Reason: "Toxic behavior", ReportCategory: 102 },
+    { Reason: "Sexual behavior in public", ReportCategory: 101 },
+    { Reason: "Sexual language in public", ReportCategory: 101 },
+    { Reason: "Non-consensual sexual behavior", ReportCategory: 101 },
+    { Reason: "Player in walls or floor", ReportCategory: 103 },
+    { Reason: "Friendly fire", ReportCategory: 103 },
+    { Reason: "Microphone spam", ReportCategory: 103 },
+    { Reason: "Abusing bugs or exploits", ReportCategory: 103 },
+    { Reason: "Spawn camping", ReportCategory: 103 },
+    { Reason: "Inactive in games (AFK)", ReportCategory: 6 },
+    { Reason: "Prefab swapping", ReportCategory: 6 },
+    { Reason: "Not following game rules", ReportCategory: 6 },
+  ]);
+});
+
+// --- rooms.rec.net discovery (RecFlare apps/rooms rooms.app.ts) ---
+// "Hot" rooms feed ("/rooms/hot", params tag/skip/take — take defaults 100). The shape is
+// the PAGED one, { Results, TotalResults } (RoomDto[] page — see the reference's
+// integration test "GET /rooms/hot returns a paginated { Results, TotalResults }"), NOT a
+// bare array. We have no live public rooms, so the feed is the same page with nothing in
+// it: { Results: [], TotalResults: 0 } (rooms/ownedby/me-style [] here would malform the
+// browse screen's paged reader).
+route("GET", "/rooms/hot", (c) => {
+  const tag = c.query.get("tag") ?? "";
+  const skip = Number.parseInt(c.query.get("skip") ?? "0", 10) || 0; // mirrored; nothing to page
+  const take = Number.parseInt(c.query.get("take") ?? "100", 10) || 100;
+  log({ event: "rooms-hot", tag, skip, take });
+  c.send(200, { Results: [], TotalResults: 0 });
+});
+
+// GET /rooms/featuredrooms/current — a single always-active featured group. Auth-gated
+// (the build is read off the token, so no token is a 401: {error:"Unauthorized"} per the
+// rooms worker's `unauthorized`), and gated on the token's BUILD — serve only to the
+// FEATURED_ROOMS_VERSIONS allow-list (the reference's, verbatim); other builds get the
+// plain 404 the path gave while it was parked, because this payload breaks the 2023
+// client's other room listings. The bare `YYYYMMDD` mirrors authedGameVersion (every
+// point release of it is the same build). Nothing else is per-player: with nothing
+// published here the group is VALID but empty.
+const FEATURED_ROOMS_VERSIONS: ReadonlySet<string> = new Set(["20250718"]);
+route("GET", "/rooms/featuredrooms/current", (c) => {
+  if (!c.authUser) return c.send(401, { error: "Unauthorized" });
+  const tok = c.req.headers.authorization!.slice(7);
+  let claims: Record<string, unknown> = {};
+  try {
+    claims = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString("utf8"));
+  } catch {}
+  const raw = String(claims["rn.ver"] ?? "");
+  const version = raw.split(/[.-]/)[0] ?? "";
+  if (!FEATURED_ROOMS_VERSIONS.has(version)) {
+    // 404 with NO body (c.notFound() in the reference).
+    c.res.setHeader("content-length", "0");
+    c.res.writeHead(404);
+    c.res.end();
+    return;
+  }
+  c.send(200, {
+    FeaturedRoomGroupId: 1,
+    name: "Featured Rooms",
+    StartAt: "2025-12-01T11:01:00Z", // getFeaturedRooms' fixed stub window
+    EndAt: "9999-12-08T11:00:00Z",
+    Rooms: [], // nothing published here yet
+  });
+});
+
 // GET /rooms/{id} — during "preparing", the client fetches the full Room to build the scene
 // (subrooms, save). We serve the caller's dorm (roomId == their account id, set in matchmake).
 route("GET", "/rooms/**", (c) => {
@@ -1169,7 +1582,37 @@ route("POST", "/pageview/consume", (c) => c.send(200, {}));
 // --- playersettings.rec.net ---
 route("GET", "/playersettings", (c) => {
   if (!c.authUser) return c.send(401, {});
-  c.send(200, []); // no stored settings; client falls back to its own defaults
+  // RecFlare's live payload for a brand-new account (recorded verbatim): the OOBE
+  // and orientation-complete keys. With [] the client treats itself as mid-tutorial,
+  // which strands the room-load spawn chain (fading camera never resolves).
+  const id = Number(c.authUser.Id ?? c.authUser.accountId ?? selfPlayerId(c) ?? 0);
+  const setting = (Key: string, Value: string) => ({ PlayerId: id, Key, Value });
+  c.send(200, [
+    setting("Recroom.OOBE", "77"),
+    setting("TUTORIAL_COMPLETE_MASK", "43"),
+    setting("FIRST_TIME_IN_FLAGS", "0"),
+    setting("Recroom.AccountCreation.HasStarted", "True"),
+    setting("Recroom.AccountCreation.HasFinished", "True"),
+    setting("Recroom.AccountCreation.HasChosenUsername", "True"),
+    setting("Recroom.AccountCreation.HasCreatedPassword", "True"),
+    setting("Recroom.AccountCreation.AcceptedCodeOfConduct", "True"),
+    setting("LastSelectedLocale", "en"),
+    setting("PlayerSessionCount", "2"),
+    setting("accepted_user_agreements", "True"),
+    setting("Growth.LastEmailPromptTime", new Date().toISOString()),
+    setting("HAS_RECEIVED_WATCH", "True"),
+    setting("HAS_COMPLETED_ORIENTATION", "True"),
+    setting("OrientationCompletionTime", new Date().toISOString()),
+    setting("PurchaseCampaignShowTriggerDebugText", "False"),
+    setting("THIRD_PERSON_PREFERENCE", "False"),
+    setting("MakerPen_GridSnap_V2", "0.5"),
+    setting("MakerPen_AngleSnap_V2", "45"),
+    setting("BACKPACK_FAVORITE_TOOL", "-1"),
+    setting("HasCheckedForPlatformReferrers", "True"),
+    setting("HAS_OPENED_WATCH_MENU_BEFORE", "True"),
+    setting("SCREENS_HEAD_BOB", "1"),
+    setting("AutosaveInterval", "300"),
+  ]);
 });
 // PUT upserts settings; RecFlare returns the settings ARRAY ([{PlayerId,Key,Value}]), not {}.
 // We don't persist, so echo an empty array (correct type — the client parses a list).
@@ -1217,7 +1660,7 @@ route("GET", "/api/avatar/v4/items", (c) => {
 // Owned custom avatar items: paginated envelope, empty for a fresh account.
 route("GET", "/econ/customAvatarItems/v1/owned", (c) => {
   if (!c.authUser) return c.send(401, {});
-  c.send(200, { Items: [], TotalCount: 0, PageToken: null });
+  c.send(200, { Results: [], TotalResults: 0 });
 });
 route("GET", "/api/storefronts/v4/balance/**", (c) => {
   if (!c.authUser) return c.send(401, {});
@@ -1314,20 +1757,14 @@ route("POST", "/api/playerReputation/v2/bulk", reputationBulk);
 // Shape per recflare/server apps/api/src/openapi.ts (StoredOutfit). LegacyData.SelectionsV1
 // is the semicolon-delimited legacy descriptor string (our flat OutfitSelections).
 const storedOutfit = () => ({
-  LegacyData: {
-    SelectionsV1: (defaultAvatar as Record<string, unknown>).OutfitSelections ?? "",
-    SelectionsV2: null,
-    FaceFeatures: (defaultAvatar as Record<string, unknown>).FaceFeatures ?? "",
-    SkinColor: (defaultAvatar as Record<string, unknown>).SkinColor ?? "",
-    HairColor: (defaultAvatar as Record<string, unknown>).HairColor ?? "",
-  },
-  Selections: [],
-  DataVersion: 2,
-  CustomizationSettings: null,
-  ThumbnailFileName: null,
-  Name: null,
-  Accessibility: 0,
-  Slot: 0,
+  // RecFlare's brand-new-account envelope is the FLAT four-empty-strings shape — the
+  // client bootstraps its own default doll from built-ins when everything is empty. A
+  // crafted default (with real selections) instead applies something the rig may not
+  // resolve, leaving the fade camera without its target (black screen).
+  FaceFeatures: "",
+  HairColor: "",
+  OutfitSelections: "",
+  SkinColor: "",
 });
 // Per-player worn outfit (slot 0). The client builds/normalizes its avatar on spawn and
 // PUTs the result here; a 404 on that write left the avatar unestablished (no skeleton, so
@@ -1349,11 +1786,8 @@ route("PUT", "/outfits/me", (c) => {
       storedOutfitById.set(selfPlayerId(c), body);
     }
   } catch { /* unparseable — still ack */ }
-  // RecFlare answers { Success, Slot } here (the base envelope carries the slot), NOT the
-  // { Success, Error, error_id } shape most other writes use.
-  let slot = 0;
-  try { const b = c.body ? JSON.parse(c.body) as { Slot?: number } : null; slot = b?.Slot ?? 0; } catch { }
-  c.send(200, { Success: true, Slot: slot });
+  // RecFlare answers the bare { Success, Error, error_id } envelope — NOT { Success, Slot }.
+  c.send(200, { Success: true, Error: null, error_id: null });
 });
 // The wardrobe list behind the newer outfit screen (2025 client): every saved slot, ordered,
 // slot 0 included, `[]` when none — same table PUT /outfits/me writes.
@@ -1492,11 +1926,20 @@ route("GET", "/api/messages/v2/get", (c) => c.send(200, []));
 route("GET", "/api/relationships/v2/get", (c) => c.send(200, []));
 // Chat threads — none yet.
 route("GET", "/thread", (c) => c.send(200, []));
-route("GET", "/thread/party", (c) => c.send(200, []));
+route("GET", "/thread/party", (c) => c.send(200, {}));
 // Cached-login batch (plural) — like the singular, nothing linked -> empty list.
 route("POST", "/cachedlogin/forplatformids", (c) => c.send(200, []));
 // Store catalog (commerce) — empty = no SKUs for sale (store is empty but valid).
-route("GET", "/api/catalog/v1/all", (c) => c.send(200, []));
+route("GET", "/api/catalog/v1/all", (c) => {
+  // RecFlare's live SKU catalog, recorded verbatim from a real boot (raw text keeps
+  // the client's exact parse).
+  const text = rawStaticText("api-catalog-v1-all.json") ?? "[]";
+  c.res.setHeader("content-type", "application/json; charset=utf-8");
+  c.res.setHeader("x-uwunet", "uwunet");
+  c.res.setHeader("content-length", String(Buffer.byteLength(text, "utf8")));
+  c.res.writeHead(200);
+  c.res.end(text);
+});
 route("GET", "/purchase/v1/cleanuppending", (c) => c.send(200, []));
 route("POST", "/purchase/v1/cleanuppending", (c) => c.send(200, []));
 // Clubs (subscriptions/announcements) — none for a fresh account.
@@ -1646,6 +2089,85 @@ route("GET", "/Room_server/dormroom/me", (c) => {
   });
 });
 
+// ---------------------------------------------------------------- RFPROXY mode
+// RFPROXY=1: any request no registered local route matches is forwarded to the
+// RecFlare LIVE server (same subdomain: econ.rec.net -> econ.recflare.net),
+// and the upstream's status + headers + raw body are echoed verbatim. This lets
+// a real game client run against RecFlare's live backend THROUGH our edge so we
+// can record what RecFlare answers, per line, in data/harvest/rfproxy.jsonl.
+const RFPROXY_ENABLED = process.env.RFPROXY === "1";
+const RFPROXY_LOG = path.join(DATA, "harvest", "rfproxy.jsonl");
+const RFPROXY_TARGET = (sub: string) => `https://${sub || "api"}.recflare.net`;
+const HOST_SUFFIX = "." + (process.env.UWU_NS_DOMAIN ?? "rec.net");
+// The upstream sub for a request host: "econ.rec.net" -> "econ", and an already
+// recflare.net host passes through (the edge can be aimed at either).
+const subForHost = (host: string): string =>
+  (host.split(",")[0] ?? "").trim().toLowerCase().replace(/:\d+$/, "").replace(
+    /\.(rec\.net|recflare\.net)$/,
+    "",
+  );
+async function rfProxy(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  sub: string,
+  p: string,
+  search: string,
+  body: string,
+) {
+  const url = `${RFPROXY_TARGET(sub)}${p}${search}`;
+  // Host/content-length describe OUR hop; node's fetch recomputes both for TLS
+  // to recflare.net (Cloudflare). Everything else (Authorization! content-type,
+  // accept, x-*) is forwarded untouched.
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (v == null) continue;
+    const kl = k.toLowerCase();
+    if (kl === "host" || kl === "content-length" || kl === "connection") continue;
+    headers[k] = Array.isArray(v) ? v.join(", ") : String(v);
+  }
+  let r: Response;
+  try {
+    r = await fetch(url, {
+      method: req.method,
+      headers,
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
+    });
+  } catch (e) {
+    log({ event: "rfproxy-error", sub, path: p, error: String(e) });
+    res.writeHead(502, { "content-type": "text/plain" });
+    res.end(`RFPROXY upstream error: ${String(e)}`);
+    return;
+  }
+  const buf = Buffer.from(await r.arrayBuffer());
+  // Echo the upstream headers minus the transport ones we can't replay honestly:
+  // content-length/transfer-encoding/content-encoding (fetch already decompressed
+  // the body) and our own hop's connection management.
+  const SKIP = new Set([
+    "content-length", "transfer-encoding", "content-encoding",
+    "connection", "keep-alive", "upgrade",
+  ]);
+  r.headers.forEach((value, name) => {
+    if (!SKIP.has(name.toLowerCase())) res.setHeader(name, value);
+  });
+  res.writeHead(r.status);
+  res.end(buf);
+  // One JSONL line per proxied request (small bodies inline as base64 for diffing).
+  const line: Record<string, unknown> = {
+    t: Date.now(),
+    method: req.method,
+    sub,
+    path: p,
+    reqAuth: (req.headers.authorization ?? "").slice(0, 12) || undefined,
+    status: r.status,
+    len: buf.byteLength,
+  };
+  if (buf.byteLength <= 20000) line.bodyB64 = buf.toString("base64");
+  try {
+    appendFileSync(RFPROXY_LOG, JSON.stringify(line) + "\n");
+  } catch {}
+  console.log(`RFPROXY ${r.status} ${sub}${p}`);
+}
+
 // ---------------------------------------------------------------- dispatch
 async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, useTls: boolean) {
   const host = String(req.headers.host ?? "").toLowerCase();
@@ -1674,7 +2196,7 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
       const bodyStr = JSON.stringify(obj);
       const buf = Buffer.from(bodyStr, "utf8");
       // DEBUG: log ALL response bodies (temporary) to trace the room-load "No such room".
-      log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status, body: bodyStr.slice(0, 300) });
+      log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status, body: bodyStr });
       res.setHeader("content-type", "application/json; charset=utf-8");
       // Explicit byte-accurate Content-Length (non-chunked): BestHTTP over our hand-rolled
       // TLS/keep-alive edge mis-reassembled larger chunked bodies (e.g. the ~1.9KB dorm
@@ -1703,6 +2225,13 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     fmt: req.headers["content-type"] ?? null,
     body: body ? body.slice(0, 3000) : undefined,
   });
+
+  // RFPROXY=2: proxy EVERYTHING to RecFlare live (even locally-handled paths) so a game
+  // boot records the reference wire with full bodies — used for byte-diffing.
+  if (process.env.RFPROXY === "2") {
+    await rfProxy(req, res, subForHost(host), p, u.search, body);
+    return;
+  }
 
   for (const r of routes) {
     if (r.method === req.method && r.re.test(p)) {
@@ -1746,6 +2275,17 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
       log({ event: "fixture", host: req.headers.host, method: req.method, path: p });
       return;
     }
+  }
+
+  // RFPROXY fallthrough: nothing local matched this path — forward it to the
+  // RecFlare live server for the same subdomain and echo the answer verbatim
+  // (HEAD included: the client's reachability probes read the real status).
+  // This sits BEFORE the HEAD/404 handlers, i.e. exactly where the old
+  // not-implemented 404 went, so RFPROXY=1 turns every fallthrough catch-all
+  // into a live pass-through.
+  if (RFPROXY_ENABLED) {
+    await rfProxy(req, res, subForHost(host), p, u.search, body);
+    return;
   }
 
   // HEAD on any path the client probes for reachability: 200, empty.
