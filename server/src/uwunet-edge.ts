@@ -16,7 +16,9 @@ const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA = path.join(HERE, "..", "data");
 mkdirSync(path.join(DATA, "harvest"), { recursive: true });
 
-const CERT_PATH = process.env.UWU_CERT_DIR ?? "/home/bloink/UwUNet/certs";
+// Resolve certs relative to the repo (HERE is <repo>/server) so this works on any
+// checkout — dev box or VPS — without a machine-specific hardcoded home path.
+const CERT_PATH = process.env.UWU_CERT_DIR ?? path.join(HERE, "..", "certs");
 const TLS_PORT = Number(process.env.TLS_PORT ?? 8443);
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8460);
 
