@@ -1,4 +1,4 @@
-/* uwu-patch.c — RecRoom.exe IAT-seam experiment ported from RecFlare's
+/* uwu-patch.c — RecRoom.exe IAT-seam experiment ported from the reference's
  * patch-2025 Referee approach, wine-native:
  *   1. find RecRoom.exe with Referee.dll mapped
  *   2. PTRACE attach, stop it

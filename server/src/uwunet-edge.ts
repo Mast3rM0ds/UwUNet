@@ -111,7 +111,7 @@ function newToken(kind: "at" | "rt", userId: string): string {
   return `${body}.${sig}`;
 }
 // --- RecNet access token: real HS256 JWT (the client decodes sub/role/scope
-// and rejects a token that is only `sub` or non-integer). Mirrors RecFlare's
+// and rejects a token that is only `sub` or non-integer). Mirrors the reference's
 // generateToken claim set. ---
 const UWU_SECRET = process.env.UWU_SECRET ?? "uwunet-dev-secret";
 const TOKEN_TTL = 86400;
@@ -237,7 +237,7 @@ function accountJson(u: User) {
 }
 
 // RecNet public account DTO (camelCase) — the shape the game client parses for
-// bulk/account lookups. Mirrors RecFlare's toAccountDto. Numeric fields are
+// bulk/account lookups. Mirrors the reference's toAccountDto. Numeric fields are
 // NUMBERS (accountId/platforms/pronouns/identityFlags) — the client's strict
 // reader throws on a quoted number.
 function accountDto(u: User) {
@@ -293,7 +293,7 @@ type Ctx = {
   body: string;
   authUser: User | null;
   send: (status: number, obj: unknown) => void;
-  // Zero-length 200 body (RecFlare's `c.body(null, 200)`). The client treats an empty body as
+  // Zero-length 200 body (the reference's `c.body(null, 200)`). The client treats an empty body as
   // a void/success ack; a `{}` here is parsed as a typed object and fails ("Malformed '{}'").
   empty: () => void;
 };
@@ -359,7 +359,7 @@ async function doClaim(e){e.preventDefault();out.textContent='working...';out.id
 
 // RecNet nameserver service-discovery map. GET ns.rec.net/ returns this so the
 // client learns every service host. We advertise the real *.rec.net subdomains;
-// uwudns64 funnels them all to this one edge. Mirrors recflare/server apps/ns.
+// uwudns64 funnels them all to this one edge. Mirrors the reference server apps/ns.
 const NS_SUBDOMAINS: Record<string, string> = {
   Accounts: "accounts", AI: "ai", API: "api", Auth: "auth",
   BugReporting: "bugreporting", Cards: "cards", CDN: "cdn", Chat: "chat",
@@ -445,8 +445,8 @@ const defaultAvatar = readStatic("default-avatar.json", {
 });
 
 const DORM_SCENE = "76d98498-60a1-430c-ab76-b54a29b7a163"; // base sandbox/dorm scene
-// The CANONICAL dorm template: RecFlare's room 1 (DORM_TEMPLATE_ROOM_ID), fetched live from
-// rooms.recflare.net/rooms/1 — the exact empty-dorm RoomDto real clients accept. getOrCreate-
+// The CANONICAL dorm template: the reference's room 1 (DORM_TEMPLATE_ROOM_ID), fetched live from
+// the reference API/rooms/1 — the exact empty-dorm RoomDto real clients accept. getOrCreate-
 // DormRoom clones this per account. We spread it and override ONLY the identity fields, so the
 // whole shape (ImageName "DormRoom.jpg", CurrentSave: null, no subroom blobs, every flag) is
 // verbatim what the client's strict parser expects. Hand-built variants all failed "Malformed
@@ -454,16 +454,16 @@ const DORM_SCENE = "76d98498-60a1-430c-ab76-b54a29b7a163"; // base sandbox/dorm 
 const roomTemplate = readStatic("room-template.json", {}) as Record<string, unknown>;
 const templateSubRoom = (Array.isArray(roomTemplate.SubRooms) && roomTemplate.SubRooms[0]) || {};
 // Orientation (room 13) is a PUBLIC system room, identical for every account, so we serve
-// RecFlare's live /rooms/13?include=767277 body verbatim rather than mangling the dorm template.
+// the reference's live /rooms/13?include=767277 body verbatim rather than mangling the dorm template.
 // This eliminated the room-DTO as a suspect for the `Enumerable.First` abort during room-load:
 // the dorm template had IsSandbox:true on its subroom (orientation's is false), which makes the
 // client load the maker-pen/circuit/save path and `.First()` an empty save/circuit collection.
 const orientationRoomStatic = readStatic("orientation-room.json", {}) as Record<string, unknown>;
 
 // Rec Room first-party rooms (RROs) + the Rec Center: metadata only (room id, name, the baked
-// Unity scene GUID, capacity) from RecFlare's public room data — no copyrighted room build.
+// Unity scene GUID, capacity) from the reference's public room data — no copyrighted room build.
 // The interactive save layer is nulled: the client loads the baked scene it already ships, so
-// 24 of the 27 RROs (which have no save on RecFlare either) play exactly as Rec Room did.
+// 24 of the 27 RROs (which have no save on the reference either) play exactly as Rec Room did.
 // Serving these lets the client resolve, list and matchmake into every RRO and the Rec Center.
 const rroData = readStatic("rro-rooms.json", { rooms: {}, byName: {} }) as {
   rooms: Record<string, Record<string, unknown>>;
@@ -508,7 +508,7 @@ const dormRoomDto = (id: number, username: string) => ({
 // (404 -> "Failed to connect to RecNet"). This shape was accepted (no
 // "Malformed Response"); keep it.
 route("GET", "/api/versioncheck/v4", (c) => {
-  // RecFlare's live shape (recorded from a real patched-client boot): a bare
+  // the reference's live shape (recorded from a real patched-client boot): a bare
   // status object. The old ClientForceUpgrade shape was never accepted by the
   // 2025 client's parser.
   c.send(200, {
@@ -530,7 +530,7 @@ route("GET", "/api/versioncheck/islandedversions", (c) => {
 // accounts"). Return the accounts linked to this platform id — [] when none,
 // which sends the client to a fresh login / create-account instead of erroring.
 // GET (older builds) and POST (2025 build posts deviceId/platformAuth/time,
-// which we accept and ignore). Shape per RecFlare: CachedLogin[].
+// which we accept and ignore). Shape per the reference: CachedLogin[].
 const cachedLoginHandler = (c: Ctx) => {
   const parts = c.path.split("/");
   const platform = parts[3] ?? "0";
@@ -605,7 +605,7 @@ route("POST", "/connect/token", async (c) => {
     // Seed the Orientation (-2) presence at the EARLIEST auth point: the client calls GET
     // /player/connection-info right after /connect/token (before /player/login), and that
     // response's photonRoomId/region come from the stored presence. Without the seed here it
-    // returned photonRoomId:"" and the client had no room to connect Photon to. RecFlare seeds
+    // returned photonRoomId:"" and the client had no room to connect Photon to. the reference seeds
     // this at account creation; we seed on any token issue if there's no live presence yet.
     const uid = Number(u.Id);
     // Record the client-reported deviceClass (screen/PC = 2) so the heartbeat echoes it and
@@ -724,7 +724,7 @@ route("GET", "/account/**", (c) => {
   c.send(200, u ? accountDto(u) : defaultAccountDto(id));
 });
 
-// ---- post-login wave (shapes mirrored from RecFlare) --------------------
+// ---- post-login wave (shapes mirrored from the reference) --------------------
 // Parse bulk ids from repeated ?id=, comma lists, and a form body.
 const parseIds = (c: Ctx): number[] => {
   const raw: string[] = [...c.query.getAll("id")];
@@ -744,7 +744,7 @@ const parseIds = (c: Ctx): number[] => {
 };
 
 // --- match.rec.net (presence + realtime handshake) ---
-// Shapes from recflare/server apps/match/src/{openapi,match.app}.ts.
+// Shapes from the reference server apps/match/src/{openapi,match.app}.ts.
 const GAME_VERSION = "20250718.01";
 
 // Server-side presence: which room instance each player is currently in. Set when they
@@ -757,7 +757,7 @@ const presenceById = new Map<number, unknown>();
 // A screen/PC client sends device_class=2; the heartbeat playerDto MUST echo that exact value.
 // Hardcoding 0 made the client's local presence (deviceClass 2) disagree with the heartbeat,
 // which it reports as "RecNet presence heartbeat response indicates local presence is
-// out-of-sync!" every ~30s. RecFlare stores deviceClass from the token request and replays it.
+// out-of-sync!" every ~30s. the reference stores deviceClass from the token request and replays it.
 const deviceClassById = new Map<number, number>();
 
 // PlayerDto: the player's presence as the client reads it (GET /player, POST
@@ -787,7 +787,7 @@ const playerDto = (playerId: number, roomInstance: unknown = null) => ({
 });
 const selfPlayerId = (c: Ctx) => (c.authUser ? Number(c.authUser.Id) : 1000000);
 
-// Session LoginLock, recorded at /player/login and verified on each heartbeat. RecFlare's
+// Session LoginLock, recorded at /player/login and verified on each heartbeat. the reference's
 // login acks EMPTY (not a PlayerDto); the heartbeat returns the presence unless the posted
 // lock no longer matches (superseded session). Our old login returned a PlayerDto, which the
 // client read as a presence that disagreed with its local session.
@@ -799,7 +799,7 @@ const parseLoginLock = (c: Ctx): string | undefined => {
 // New players are placed in ORIENTATION (RoomId 13) by the client's new-user flow, which
 // loads the scene LOCALLY (no matchmake) and tags its instance with the sentinel id -2. The
 // presence heartbeat MUST echo roomInstanceId -2 or the client declares "RecNet presence
-// heartbeat ... local presence is out-of-sync!" and sticks forever at "preparing". RecFlare's
+// heartbeat ... local presence is out-of-sync!" and sticks forever at "preparing". the reference's
 // auth worker seeds this presence at account creation (placeNewPlayerInOrientation); we seed
 // it at login when the player has no live presence yet. Shape mirrors match's roomInstance.
 const ORIENTATION_INSTANCE_ID = -2;
@@ -837,7 +837,7 @@ const orientationRoomInstance = () => {
     photonRegionId: region,
     photonRoomId: `rec.${ORIENTATION_ROOM_ID}`,
     name: "^Orientation",
-    maxCapacity: 1, // Orientation is solo (RecFlare room 13 MaxPlayers 1) — matches orientationRoomDto
+    maxCapacity: 1, // Orientation is solo (the reference room 13 MaxPlayers 1) — matches orientationRoomDto
     isFull: false,
     isPrivate: false,
     isInProgress: false,
@@ -896,7 +896,7 @@ route("POST", "/player/login", (c) => {
   // client (locally loading Orientation) stays in sync. Don't clobber a live room presence
   // set by a later matchmake.
   if (!presenceById.has(id)) presenceById.set(id, defaultSpawnInstance(id));
-  c.empty(); // RecFlare acks an EMPTY body here, NOT a PlayerDto
+  c.empty(); // the reference acks an EMPTY body here, NOT a PlayerDto
 });
 route("POST", "/player/logout", (c) => {           // empty ack
   const id = selfPlayerId(c);
@@ -916,14 +916,14 @@ route("POST", "/player/heartbeat", (c) => {
   const id = selfPlayerId(c);
   // Verify the beat still owns the session. A posted lock that disagrees with the one
   // recorded at login belongs to a superseded session -> return EMPTY so that stale client
-  // stops (RecFlare's behavior). The current session's lock always matches, so it gets the
+  // stops (the reference's behavior). The current session's lock always matches, so it gets the
   // presence payload back and stays in sync.
   const posted = parseLoginLock(c);
   const stored = loginLockById.get(id);
   if (posted && stored && posted !== stored) { c.empty(); return; }
   c.send(200, playerDto(id, presenceById.get(id) ?? null));
 });
-// Status visibility toggle — RecFlare acks with an EMPTY body (not a PlayerDto, not {}).
+// Status visibility toggle — the reference acks with an EMPTY body (not a PlayerDto, not {}).
 route("PUT", "/player/statusvisibility", (c) => c.empty());
 // GET /player — presence for the caller (or a default online player when no ids given).
 route("GET", "/player", (c) => {
@@ -992,7 +992,7 @@ route("GET", "/player/connection-info", (c) => {
 // PLAY sends the caller into their own dorm. `/matchmake/dorm` (and `/matchmake/none`,
 // which falls back to the dorm) return a MatchmakeResponse; the client reads roomInstance
 // for the Photon coordinates + Unity scene, then connects to Photon. Two hard rules from
-// RecFlare's spec: (1) `correlationId` MUST echo the request's CorrelationId or the client
+// the reference's spec: (1) `correlationId` MUST echo the request's CorrelationId or the client
 // refuses with "Unable to connect to RecNet game session"; (2) `location` is the dorm's
 // Unity scene id — empty makes the client reject the instance. photonRoomId is the Photon
 // room co-joiners share; deterministic per dorm so re-joins land in the same room.
@@ -1037,7 +1037,7 @@ const dormMatchmake = (c: Ctx) => {
 };
 route("POST", "/matchmake/dorm", dormMatchmake);
 // /matchmake/none — the client posts this at startup and WHILE SITTING IN ORIENTATION when it
-// needs an instance but isn't going anywhere in particular. Per RecFlare it must answer the
+// needs an instance but isn't going anywhere in particular. Per the reference it must answer the
 // instance the player is ALREADY in (re-committing presence), never force a destination —
 // forcing the dorm here warps the player out of Orientation and overwrites the -2 seed, which
 // desyncs presence and aborts the room load. Only a caller with NO live presence falls back to
@@ -1096,14 +1096,14 @@ const publicRoomInstance = (roomId: number, subRoomId?: number) => {
 };
 // The newer client reads the PascalCase envelope on /matchmake/v2/ and /matchmake/invite/; the
 // legacy routes (and our working /matchmake/dorm) read the lowercase one. Same instance, two
-// spellings — pick by the request path, like RecFlare's matchmakeResult.
+// spellings — pick by the request path, like the reference's matchmakeResult.
 const isPascalMatchmake = (p: string) => p.startsWith("/matchmake/v2/") || p.startsWith("/matchmake/invite/");
 const toV2RoomInstance = (ri: Record<string, unknown>) => ({
   RoomInstanceId: ri.roomInstanceId, RoomId: ri.roomId, SubRoomId: ri.subRoomId, Location: ri.location,
   EventId: ri.eventId, ClubId: ri.clubId, RoomCode: ri.roomCode, Name: ri.name, MaxCapacity: ri.maxCapacity,
   IsFull: ri.isFull, IsPrivate: ri.isPrivate, IsInProgress: ri.isInProgress, EncryptVoiceChat: ri.EncryptVoiceChat,
   RoomInstanceType: ri.roomInstanceType, MatchmakingPolicy: 0,
-  // RecFlare's v2 instance omits the Photon fields; the client tolerates extras and needs these
+  // the reference's v2 instance omits the Photon fields; the client tolerates extras and needs these
   // to connect, so include them.
   PhotonRegion: ri.photonRegion, PhotonRegionId: ri.photonRegionId, PhotonRoomId: ri.photonRoomId, DataBlob: ri.dataBlob,
 });
@@ -1153,10 +1153,10 @@ route("POST", "/matchmake/player/{playerId}", playerMatchmake);
 route("POST", "/matchmake/v2/player/{playerId}", playerMatchmake);
 
 // GET /photon_access_token — the permission table + Photon credentials the client needs to
-// SPAWN into a room (RecFlare apps/rooms/src/rooms.app.ts). 404ing this was the dorm's
+// SPAWN into a room (the reference apps/rooms/src/rooms.app.ts). 404ing this was the dorm's
 // `FailedToSpawnPlayer (Code 8700)`: the client awaits it inside JoinRoomLoadWithPhoton, and a
 // faulted fetch aborts the whole room load. PhotonAccessToken is always "" — Photon Cloud
-// (ours, like RecFlare's) accepts an empty token; the real service signed it with a secret we
+// (ours, like the reference's) accepts an empty token; the real service signed it with a secret we
 // don't have. The permission table decides who may build; it does not gate the spawn, but the
 // client reads the whole table from this one response so we serve it faithfully.
 const ROLE_NONE = 0, ROLE_COOWNER = 30, ROLE_CREATOR = 255;
@@ -1208,7 +1208,7 @@ route("GET", "/photon_access_token", (c) => {
 });
 
 // --- rooms.rec.net: the room object the client loads after matchmake ---
-// GET /dormroom/me — returns the caller's dorm ROOM ID as a BARE NUMBER (RecFlare's
+// GET /dormroom/me — returns the caller's dorm ROOM ID as a BARE NUMBER (the reference's
 // `DormRoomId` = Number(dorm.RoomId)), NOT a RoomDto. The client then fetches the full room
 // from GET /rooms/{id}. Returning a RoomDto here makes the client fail to parse a number
 // ("Malformed Response") -> "No such room". Our dorm's roomId == the account id.
@@ -1227,7 +1227,7 @@ route("GET", "/rooms", (c) => {
     }
   }
   // Name lookup (e.g. ?name=SocialOrientation&include=... — the new-user onboarding probe).
-  // RecFlare's LIVE server returns `{}` (empty object) for a name with no matching room, and
+  // the reference's LIVE server returns `{}` (empty object) for a name with no matching room, and
   // the client reads that as "no such named room" and moves on using its local Orientation +
   // the seeded -2 presence. Returning a real dorm RoomDto here instead gave the client a room
   // whose RoomId (account id) disagreed with its Orientation presence (roomId 13), so it never
@@ -1247,7 +1247,7 @@ route("GET", "/rooms", (c) => {
       c.send(200, roomDtoFor(rroId));
       return;
     }
-    c.send(200, {}); // RecFlare's no-match response for any other unknown named room
+    c.send(200, {}); // the reference's no-match response for any other unknown named room
     return;
   }
   c.send(200, null); // neither id nor name resolvable
@@ -1264,7 +1264,7 @@ route("GET", "/rooms/bulk", (c) => {
   c.send(200, ids.map((rid) => roomDtoFor(rid)));
 });
 // Per-room, per-player saved data (the blob @'YourRoom' machines store). GET must NEVER 404:
-// RecFlare's own docs — "A player who has never saved any — or an unknown room — gets an EMPTY
+// the reference's own docs — "A player who has never saved any — or an unknown room — gets an EMPTY
 // `Data`... a 404 here would stall the room load." We used to fall through to the /rooms/**
 // catch-all's 404 for this path, which stalled the dorm's spawn chain after login.
 const roomPlayerData = new Map<string, string>(); // `${roomId}:${accountId}` -> base64 blob
@@ -1296,7 +1296,7 @@ route("GET", "/rooms/{roomId}/experience/player", (c) => {
   c.send(200, { RoomExperienceEnabled: false, Experience: 0, ConcurrencyCode: crypto.randomUUID() });
 });
 
-// Keepsakes (room mementos) — stubbed like RecFlare: feature on, zero storage, and the
+// Keepsakes (room mementos) — stubbed like the reference: feature on, zero storage, and the
 // room listing answers an EMPTY body (204) rather than an array, which the client reads as
 // "no keepsakes" (it treats a BODY here as data). The categories endpoint must be an object
 // ({Results, TotalResults}) — an array fails its parser and takes the keepsake load down.
@@ -1304,19 +1304,19 @@ route("GET", "/api/keepsakes/globalconfig", (c) =>
   c.send(200, { KeepsakeFeatureEnabled: true, KeepsakeRoomLimit: 10, SocialXpBoostEnabled: false }));
 route("GET", "/api/keepsakes/categories", (c) => c.send(200, { Results: [], TotalResults: 0 }));
 route("GET", "/api/keepsakes/rooms/{roomId}", (c) => {
-  // RecFlare answers 204 with NO body (not "null"): the client treats a body here as data.
+  // the reference answers 204 with NO body (not "null"): the client treats a body here as data.
   c.res.statusCode = 204;
   c.res.setHeader("content-length", "0");
   c.res.end();
 });
 
-// ---- post-login wave 2 (shapes mirrored from RecFlare's workers+tests) ----
+// ---- post-login wave 2 (shapes mirrored from the reference's workers+tests) ----
 // MUST sit before the /rooms/** catch-all below — dispatch picks the FIRST matching
 // route, and that catch-all would swallow every rooms path registered after it.
 
 // --- rooms.rec.net: my-rooms / queues ---
 // `*by/me` lists answer a BARE array of RoomDto. A fresh account owns only its auto-
-// provisioned dorm, which `ownedby/me` deliberately drops (RecFlare apps/rooms:
+// provisioned dorm, which `ownedby/me` deliberately drops (the reference apps/rooms:
 // rooms.app.ts "/rooms/ownedby/me" — dorm excluded), and has never visited another
 // room (no interaction rows), so visitedby/me is [] too. We only ever synthesize
 // dorms, so both stay [] here.
@@ -1328,11 +1328,11 @@ route("GET", "/rooms/visitedby/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
-// No instance queue yet → always empty (RecFlare apps/match match.app.ts: /rooms/requiring/*).
+// No instance queue yet → always empty (the reference apps/match match.app.ts: /rooms/requiring/*).
 route("GET", "/rooms/requiring/developer", (c) => c.send(200, []));
 route("GET", "/rooms/requiring/rrplus", (c) => c.send(200, []));
 
-// Room browse filter chips (RecFlare apps/api routes/rooms.ts "/api/rooms/v1/filters").
+// Room browse filter chips (the reference apps/api routes/rooms.ts "/api/rooms/v1/filters").
 // The client deserializes an OBJECT, not an array; TrendingFilters is a real list.
 route("GET", "/api/rooms/v1/filters", (c) =>
   c.send(200, {
@@ -1345,7 +1345,7 @@ route("GET", "/api/rooms/v1/filters", (c) =>
   }));
 
 // --- discovery.rec.net page sources ---
-// `{type}` IS the filename: static/<type>.json served verbatim (RecFlare apps/discovery
+// `{type}` IS the filename: static/<type>.json served verbatim (the reference apps/discovery
 // discovery.app.ts "/sections/pagesource/:type"). With Discovery.UseNewDiscoveryServerAPI
 // the client asks this instead of the embedded-config gameconfigs. File missing → 404,
 // like the reference's unpublished names. The body is the bare ARRAY with camelCase
@@ -1359,7 +1359,7 @@ route("GET", "/sections/pagesource/{type}", (c) => {
 });
 
 // --- econ.rec.net: store + RR+ ---
-// Gift-drop storefront: serves sf{id}.json via assets (RecFlare econ.app.ts
+// Gift-drop storefront: serves sf{id}.json via assets (the reference econ.app.ts
 // "/api/storefronts/v3/giftdropstore/:id"). Our build (20250718.01) is a 2025 client,
 // so storefront 3 reads the 2025 store dump sf3-2025.json; other ids try sf{id}-2025
 // then plain sf{id}. No capture → 404.
@@ -1372,20 +1372,20 @@ route("GET", "/api/storefronts/v3/giftdropstore/{id}", (c) => {
   if (body === null) return c.send(404, {});
   c.send(200, body);
 });
-// RR+ sign-up bonus: fixed numbers (RecFlare econ.app.ts "/api/CampusCard/v1/SignUpBonus").
+// RR+ sign-up bonus: fixed numbers (the reference econ.app.ts "/api/CampusCard/v1/SignUpBonus").
 route("GET", "/api/CampusCard/v1/SignUpBonus", (c) =>
   c.send(200, { RRPlusSignUpBonusId: 3, MinFreeItemsPrice: 6000, MaxFreeItemsPrice: 10000 }));
 // The caller's RR+ subscription. No labels carry it here → `{}` = "not subscribed"
-// (RecFlare econ.app.ts POST "/api/CampusCard/v1/UpdateAndGetSubscription"; auth is
+// (the reference econ.app.ts POST "/api/CampusCard/v1/UpdateAndGetSubscription"; auth is
 // OPTIONAL there — a 401 would stall the client's load, so none is sent).
 route("POST", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
-// 2025 builds: the season read is a bare [] (RecFlare "/api/subscriptionseasons/v1/
+// 2025 builds: the season read is a bare [] (the reference "/api/subscriptionseasons/v1/
 // seasons/current" serves [] to any build below 20260323 — ours is 20250718.01).
 route("GET", "/api/subscriptionseasons/v1/seasons/current", (c) => c.send(200, []));
 
 // --- images / chat privacy ---
 // The photo-tagging preference is ONE key in the player-settings bag, served as a BARE
-// integer (RecFlare apps/api routes/images.ts "/api/players/v1/playerPhotoTaggingSetting"
+// integer (the reference apps/api routes/images.ts "/api/players/v1/playerPhotoTaggingSetting"
 // — an enum ordinal the client defines; 0 until the player sets one).
 route("GET", "/api/players/v1/playerPhotoTaggingSetting", (c) => {
   if (!c.authUser) return c.send(401, {});
@@ -1395,11 +1395,11 @@ route("PUT", "/api/players/v1/playerPhotoTaggingSetting", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, 0); // nothing persisted — answer the (unset) stored value
 });
-// Named-image catalog (RecFlare apps/api routes/images.ts "/api/images/v2/named").
+// Named-image catalog (the reference apps/api routes/images.ts "/api/images/v2/named").
 route("GET", "/api/images/v2/named", (c) => c.send(200, []));
 // Who may DM the caller / add them to a group chat: enum by NUMBER (0 Friends·1
 // Favorites·2 NoOne), keyed by the TOKEN's player id, defaulting to Friends for both —
-// exactly what a player who never set them reads (RecFlare apps/chat chat.app.ts).
+// exactly what a player who never set them reads (the reference apps/chat chat.app.ts).
 route("GET", "/thread/chatPrivacySetting", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, {
@@ -1410,16 +1410,16 @@ route("GET", "/thread/chatPrivacySetting", (c) => {
 });
 
 // --- api.rec.net monolith surface ---
-// Online-friend count (RecFlare apps/api routes/social.ts "/api/messages/v1/
+// Online-friend count (the reference apps/api routes/social.ts "/api/messages/v1/
 // friendOnlineStatus": { success, value: { FriendsOnlineCount } }); no friends graph → 0.
 route("POST", "/api/messages/v1/friendOnlineStatus", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, { success: true, value: { FriendsOnlineCount: 0 } });
 });
-// External platform invite referrers (NOT in RecFlare — GUESSED [] for a fresh account;
+// External platform invite referrers (NOT in the reference — GUESSED [] for a fresh account;
 // the client 404-tolerated this before, so it has an empty-list path).
 route("POST", "/api/externalfriendinvite/v1/getplatformreferrers", (c) => c.send(200, []));
-// Influencer partner program (RecFlare econ.app.ts "/api/influencerpartnerprogram/
+// Influencer partner program (the reference econ.app.ts "/api/influencerpartnerprogram/
 // influencers"): { InfluencerIds, ContinuationToken } — an object, not a bare array.
 route("GET", "/api/influencerpartnerprogram/influencers", (c) => {
   if (!c.authUser) return c.send(401, {});
@@ -1427,7 +1427,7 @@ route("GET", "/api/influencerpartnerprogram/influencers", (c) => {
 });
 
 // --- lists.rec.net ---
-// One discovery ROW's contents (RecFlare lists.app.ts "/algorithmiclists/:list"): the
+// One discovery ROW's contents (the reference lists.app.ts "/algorithmiclists/:list"): the
 // envelope is { Type: echoed?type=, Entities: [{Id:"str", Context:null}] }, and a row with
 // nothing behind it is a 200 with NO entities (a 404 renders as a failed carousel; an
 // empty one is hidden — lists.test.ts:890). Nothing ranks here, so even HotList is empty.
@@ -1435,7 +1435,7 @@ route("GET", "/algorithmiclists/{list}", (c) => {
   const t = Number.parseInt(c.query.get("type") ?? "", 10);
   c.send(200, { Type: Number.isInteger(t) ? t : 0, Entities: [] });
 });
-// One curated list (RecFlare lists: curated-lists.ts + lists.app.ts "/curatedlists").
+// One curated list (the reference lists: curated-lists.ts + lists.app.ts "/curatedlists").
 // Params: creatorAccountId&type&name. Order: a capture matching the name, a RESERVED
 // `__`-prefixed list served empty, the page default for the type when NO name was given,
 // else an empty placeholder (anything other than "a list" breaks the client). ListId is
@@ -1498,7 +1498,7 @@ route("GET", "/curatedlists", (c) => {
   c.res.end(buf);
 });
 
-// --- community board (RecFlare apps/api routes/gameplay.ts "/api/communityboard/v2/
+// --- community board (the reference apps/api routes/gameplay.ts "/api/communityboard/v2/
 // current" — the bundled static blob, verbatim, same for everybody, no auth) ---
 route("GET", "/api/communityboard/v2/current", (c) => {
   const board = readStatic("community-board.json", null);
@@ -1507,7 +1507,7 @@ route("GET", "/api/communityboard/v2/current", (c) => {
 });
 
 // --- cards / accounts ---
-// No external channels linked → [] (RecFlare apps/api routes/account.ts
+// No external channels linked → [] (the reference apps/api routes/account.ts
 // "/iam/me/channels/:type"); the {type} is accepted and not inspected.
 route("GET", "/iam/me/channels/{type}", (c) => c.send(200, []));
 
@@ -1520,58 +1520,58 @@ route("GET", "/api/equipment/v2/getUnlocked", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
-// Pending game rewards (RecFlare econ.app.ts "/api/gamerewards/v1/pending").
+// Pending game rewards (the reference econ.app.ts "/api/gamerewards/v1/pending").
 route("GET", "/api/gamerewards/v1/pending", (c) => c.send(200, []));
-// Every key the caller holds across all rooms (RecFlare econ.app.ts
+// Every key the caller holds across all rooms (the reference econ.app.ts
 // "/api/roomkeys/v1/mine") — none bought/awarded → [].
 route("GET", "/api/roomkeys/v1/mine", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
-// Room-currency balances by room: empty stub (RecFlare econ.app.ts
+// Room-currency balances by room: empty stub (the reference econ.app.ts
 // "/api/roomcurrencies/v1/getAllBalances").
 route("GET", "/api/roomcurrencies/v1/getAllBalances", (c) => c.send(200, []));
-// The caller's own holdings of a room's consumables (RecFlare econ.app.ts
+// The caller's own holdings of a room's consumables (the reference econ.app.ts
 // ".../roomConsumable/room/:roomId/me": a bare array — a bare array; none → []).
 route("GET", "/api/roomconsumables/v1/roomConsumable/room/{roomId}/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
-// Objectives progress: the bundled default verbatim, no auth (RecFlare econ.app.ts
+// Objectives progress: the bundled default verbatim, no auth (the reference econ.app.ts
 // "/api/objectives/v1/myprogress", apps/econ/static/my-progress.json).
 route("GET", "/api/objectives/v1/myprogress", (c) => {
   const p = readStatic("my-progress.json", null);
   if (p === null) return c.send(200, { Objectives: [], ObjectiveGroups: [] });
   c.send(200, p);
 });
-// Player events: created + RSVPs (RecFlare apps/api openapi.ts PlayerEventsAll = the
+// Player events: created + RSVPs (the reference apps/api openapi.ts PlayerEventsAll = the
 // envelope {Created, Responses}) — none of either for a fresh account.
 route("GET", "/api/playerevents/v1/all", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, { Created: [], Responses: [] });
 });
-// Speech-to-text config; Enabled:false here, Key/Region still present (RecFlare apps/api
+// Speech-to-text config; Enabled:false here, Key/Region still present (the reference apps/api
 // routes/config.ts "/api/config/v1/azurespeech").
 route("GET", "/api/config/v1/azurespeech", (c) =>
   c.send(200, { Key: "dce8de5b297747d9b5bddcc7f19e8c5b", Region: "eastus", Enabled: false }));
-// Voice-moderation vendor credentials (RecFlare apps/moderation moderation.app.ts
+// Voice-moderation vendor credentials (the reference apps/moderation moderation.app.ts
 // "/voice/config") — empty means "voice moderation off", but both keys must be present
 // STRINGS; a null trips the client's parser. AccountId is a STRING even though it reads
 // numeric.
 route("GET", "/voice/config", (c) => c.send(200, { AccountId: "", ApiKey: "" }));
 
 // --- events / campaigns / circuits ---
-// Purchase campaigns (RecFlare apps/commerce "/purchasecampaign/allcurrent/v2"): none.
+// Purchase campaigns (the reference apps/commerce "/purchasecampaign/allcurrent/v2"): none.
 route("GET", "/purchasecampaign/allcurrent/v2", (c) => c.send(200, []));
-// Maker Pen circuit palettes (RecFlare apps/api routes/gameplay.ts
+// Maker Pen circuit palettes (the reference apps/api routes/gameplay.ts
 // "/api/CircuitChipLists/:list"): nothing records favourites → always []; an unknown
 // palette name is [] too, NOT a 404 (a 404 shows as a failed palette).
 route("GET", "/api/CircuitChipLists/{list}", (c) => c.send(200, []));
-// The active progression event: a BARE event id (RecFlare apps/api routes/progression.ts
+// The active progression event: a BARE event id (the reference apps/api routes/progression.ts
 // "/api/progressionEvents/active" stub = 18). A 404 would stall the load.
 route("GET", "/api/progressionEvents/active", (c) => c.send(200, 18));
 
-// One progression event's definition (RecFlare apps/api routes/progression.ts
+// One progression event's definition (the reference apps/api routes/progression.ts
 // "/api/progressionEvents/event/:id{[0-9]+}"). The archived official event, verbatim from
 // static/progression-events/ (copied from the reference's apps/api/static archive — ids
 // 2-9 and 12-18; 1, 4, 10, 11 are gaps in the reference archive too).
@@ -1640,15 +1640,15 @@ route("GET", "/api/progressionEvents/record/{id}", (c) => {
 });
 
 // --- clubs.rec.net ---
-// No home club: the client EXPECTS a 404 here and errors on an empty object (RecFlare
+// No home club: the client EXPECTS a 404 here and errors on an empty object (the reference
 // apps/clubs "/club/home/me" GET — the bare club when set, c.notFound() otherwise).
 route("GET", "/club/home/me", (c) => {
   if (!c.authUser) return c.send(401, {});
-  // RecFlare 404s a home club with {"success":false,"error":{"message":"not found"}}.
+  // the reference 404s a home club with {"success":false,"error":{"message":"not found"}}.
   c.send(404, { success: false, error: { message: "not found" } });
 });
 
-// --- moderation: vote-to-kick reasons (RecFlare apps/api routes/moderation.ts
+// --- moderation: vote-to-kick reasons (the reference apps/api routes/moderation.ts
 // VOTE_TO_KICK_REASONS — the order IS the render order; hate, sexual, griefing, conduct) ---
 route("GET", "/api/PlayerReporting/v1/voteToKickReasons", (c) => {
   if (!c.authUser) return c.send(401, {});
@@ -1671,7 +1671,7 @@ route("GET", "/api/PlayerReporting/v1/voteToKickReasons", (c) => {
   ]);
 });
 
-// --- rooms.rec.net discovery (RecFlare apps/rooms rooms.app.ts) ---
+// --- rooms.rec.net discovery (the reference apps/rooms rooms.app.ts) ---
 // "Hot" rooms feed ("/rooms/hot", params tag/skip/take — take defaults 100). The shape is
 // the PAGED one, { Results, TotalResults } (RoomDto[] page — see the reference's
 // integration test "GET /rooms/hot returns a paginated { Results, TotalResults }"), NOT a
@@ -1778,7 +1778,7 @@ route("POST", "/pageview/consume", (c) => c.send(200, {}));
 // --- playersettings.rec.net ---
 route("GET", "/playersettings", (c) => {
   if (!c.authUser) return c.send(401, {});
-  // RecFlare's live payload for a brand-new account (recorded verbatim): the OOBE
+  // the reference's live payload for a brand-new account (recorded verbatim): the OOBE
   // and orientation-complete keys. With [] the client treats itself as mid-tutorial,
   // which strands the room-load spawn chain (fading camera never resolves).
   const id = Number(c.authUser.Id ?? c.authUser.accountId ?? selfPlayerId(c) ?? 0);
@@ -1810,7 +1810,7 @@ route("GET", "/playersettings", (c) => {
     setting("AutosaveInterval", "300"),
   ]);
 });
-// PUT upserts settings; RecFlare returns the settings ARRAY ([{PlayerId,Key,Value}]), not {}.
+// PUT upserts settings; the reference returns the settings ARRAY ([{PlayerId,Key,Value}]), not {}.
 // We don't persist, so echo an empty array (correct type — the client parses a list).
 route("PUT", "/playersettings", (c) => c.send(200, []));
 
@@ -1872,7 +1872,7 @@ route("GET", "/api/customAvatarItems/v1/isCreationAllowedForAccount", (c) =>
 route("GET", "/api/customAvatarItems/v1/isCreationEnabled", (c) => c.send(200, true));
 route("GET", "/api/customAvatarItems/v1/isRenderingEnabled", (c) => c.send(200, true));
 // Resolve custom-avatar-item ids to items: a BARE ARRAY of the ones that matched,
-// in request order (RecFlare apps/api/src/routes/avatar.ts). Unknown ids are simply
+// in request order (the reference apps/api/src/routes/avatar.ts). Unknown ids are simply
 // absent — a miss is NOT an error and the client reads the items it got back.
 const bulkCustomItems = (c: Ctx) => {
   const ids: string[] = [...c.query.getAll("customAvatarItemIds")];
@@ -1891,14 +1891,14 @@ const bulkCustomItems = (c: Ctx) => {
     seen.add(id);
     const it = customItemsById.get(id);
     if (it) out.push(it);
-    // A miss is NOT an error: RecFlare's bulk omits unknown ids and the client reads
+    // A miss is NOT an error: the reference's bulk omits unknown ids and the client reads
     // the items it got back. We USED to synthesize a fake item for a missing default
-    // id (e.g. 5726c274 — which RecFlare itself returns "not found" for) by cloning a
+    // id (e.g. 5726c274 — which the reference itself returns "not found" for) by cloning a
     // real one under the requested id. The clone reused the source item's
     // CustomAvatarItemSaveId / UnityAssetId / assetbundle verbatim, so the client
     // received two items sharing one save+asset identity — a collision that corrupted
     // the in-room avatar assembly: the skeleton silently never built (black screen,
-    // audible-but-invisible world). Omit misses, exactly like RecFlare.
+    // audible-but-invisible world). Omit misses, exactly like the reference.
   }
   c.send(200, out);
 };
@@ -1950,10 +1950,10 @@ route("POST", "/api/playerReputation/v2/bulk", reputationBulk);
 // populated `LegacyData` object. The client's OutfitManager.GetAndApplyUnknownAvatarItems
 // reads outfit.LegacyData and throws "Expected LegacyData but was null" if it's absent —
 // which is why the old flat EmptyOutfit shape ({OutfitSelections,FaceFeatures,...}) failed.
-// Shape per recflare/server apps/api/src/openapi.ts (StoredOutfit). LegacyData.SelectionsV1
+// Shape per the reference server apps/api/src/openapi.ts (StoredOutfit). LegacyData.SelectionsV1
 // is the semicolon-delimited legacy descriptor string (our flat OutfitSelections).
 const storedOutfit = () => ({
-  // RecFlare's brand-new-account envelope is the FLAT four-empty-strings shape — the
+  // the reference's brand-new-account envelope is the FLAT four-empty-strings shape — the
   // client bootstraps its own default doll from built-ins when everything is empty. A
   // crafted default (with real selections) instead applies something the rig may not
   // resolve, leaving the fade camera without its target (black screen).
@@ -1964,14 +1964,14 @@ const storedOutfit = () => ({
 });
 // Per-player worn outfit (slot 0). The client builds/normalizes its avatar on spawn and
 // PUTs the result here; a 404 on that write left the avatar unestablished (no skeleton, so
-// the head-pivot camera renders black). We store it and read it back, like RecFlare's
+// the head-pivot camera renders black). We store it and read it back, like the reference's
 // `outfit` table. Nothing saved yet → the default outfit.
 const storedOutfitById = new Map<number, Record<string, unknown>>();
 route("GET", "/outfits/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, storedOutfitById.get(selfPlayerId(c)) ?? storedOutfit());
 });
-// Save the caller's outfit. RecFlare stores the body verbatim in the slot it names (slot 0 =
+// Save the caller's outfit. the reference stores the body verbatim in the slot it names (slot 0 =
 // worn, what GET reads) and answers the base envelope WITHOUT a Value — the outfit is not
 // echoed. Lenient on an unparseable body: still ack, so the avatar apply never stalls here.
 route("PUT", "/outfits/me", (c) => {
@@ -1982,7 +1982,7 @@ route("PUT", "/outfits/me", (c) => {
       storedOutfitById.set(selfPlayerId(c), body);
     }
   } catch { /* unparseable — still ack */ }
-  // RecFlare answers the bare { Success, Error, error_id } envelope — NOT { Success, Slot }.
+  // the reference answers the bare { Success, Error, error_id } envelope — NOT { Success, Slot }.
   c.send(200, { Success: true, Error: null, error_id: null });
 });
 // The wardrobe list behind the newer outfit screen (2025 client): every saved slot, ordered,
@@ -2019,17 +2019,17 @@ route("GET", "/api/PlayerReporting/v1/moderationBlockDetails", (c) => c.send(200
 route("POST", "/api/PlayerReporting/v1/moderationBlockDetails", (c) => c.send(200, NOT_BLOCKED));
 route("GET", "/api/PlayerReporting/v1/referee", (c) => c.send(200, false));
 route("POST", "/api/PlayerReporting/v1/referee", (c) => c.send(200, false));
-// PlayerReporting /hile — RecFlare's live server returns a bare `false`. Must be 200: a 404
+// PlayerReporting /hile — the reference's live server returns a bare `false`. Must be 200: a 404
 // here throws during room-load and quits the app (see AI block below).
 route("POST", "/api/PlayerReporting/v1/hile", (c) => c.send(200, false));
 
 // --- 2025 AI features (ai.rec.net / lists.rec.net) ---
 // The client checks AI access/budget during boot AND during room load
-// (GET /gameai/user/access?roomId=13 fires while loading Orientation). RecFlare serves all of
+// (GET /gameai/user/access?roomId=13 fires while loading Orientation). the reference serves all of
 // these as 200s; a 404 throws an unobserved HTTP exception that, inside the room-load critical
 // section (OperationContext.PauseNetworking "InitialLoad"), escalates to AppExitState
 // Running=>PreparingToExit — the client quit mid-Orientation-load. Shapes are verbatim from
-// recflare/server apps/ai/src/ai.app.ts + apps/lists/src/lists.app.ts. No AI backend exists;
+// the reference server apps/ai/src/ai.app.ts + apps/lists/src/lists.app.ts. No AI backend exists;
 // Game AI is refused with a 200 (success:false), Roomie/Maker report budget so the client does
 // not take a hard-failure path.
 const GAME_AI_UNSUPPORTED = {
@@ -2076,10 +2076,10 @@ route("GET", "/makerai/user/balances", (c) =>
 route("POST", "/contextualfeatures", (c) => c.send(200, { success: true, error_id: null, error: null }));
 
 // --- 2025 room economy (econ.rec.net) ---
-// The player SPAWN reads room economy data. RecFlare serves these as 200s; a 404 makes
+// The player SPAWN reads room economy data. the reference serves these as 200s; a 404 makes
 // RecRoom.Systems.Economy.RoomKeys.RoomKeysManager THROW, which RoomLoad reports as
 // FailedToSpawnPlayer (Code 8700) — the player never enters and the client loops
-// Orientation<->Dorm. Shapes from recflare/server apps/econ/src/econ.app.ts: an empty room is
+// Orientation<->Dorm. Shapes from the reference server apps/econ/src/econ.app.ts: an empty room is
 // empty collections. (Serving these is what let us get past the room-load exit wall.)
 route("GET", "/api/roomkeys/v1/room", (c) => c.send(200, []));
 route("GET", "/api/roomcurrencies/v1/currencies", (c) => c.send(200, []));
@@ -2099,7 +2099,7 @@ route("GET", "/econ/roomEconConfig/{roomId}", (c) => {
 // CampusCard (RR+ subscription) — a non-subscriber gets an empty object.
 route("GET", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
 
-// --- boot/PLAY peripherals (shapes from recflare/server apps/api openapi.ts) ---
+// --- boot/PLAY peripherals (shapes from the reference server apps/api openapi.ts) ---
 // QuickPlay: a pending quick-play action; all-null = none pending. Checked on PLAY.
 route("GET", "/api/quickPlay/v1/getandclear", (c) =>
   c.send(200, { RoomName: null, ActionCode: null, TargetPlayerId: null }));
@@ -2127,7 +2127,7 @@ route("GET", "/thread/party", (c) => c.send(200, {}));
 route("POST", "/cachedlogin/forplatformids", (c) => c.send(200, []));
 // Store catalog (commerce) — empty = no SKUs for sale (store is empty but valid).
 route("GET", "/api/catalog/v1/all", (c) => {
-  // RecFlare's live SKU catalog, recorded verbatim from a real boot (raw text keeps
+  // the reference's live SKU catalog, recorded verbatim from a real boot (raw text keeps
   // the client's exact parse).
   const text = rawStaticText("api-catalog-v1-all.json") ?? "[]";
   c.res.setHeader("content-type", "application/json; charset=utf-8");
@@ -2147,7 +2147,7 @@ route("POST", "/statsigUserProperties", (c) => c.send(200, { success: true }));
 route("GET", "/statsigUserProperties", (c) => c.send(200, { success: true }));
 // Referee (anti-cheat) files manifest — none to fetch.
 route("GET", "/api/referee/files", (c) => c.send(200, []));
-// Data-collection sampling config — RecFlare returns an ARRAY ([]), not {} (which malforms).
+// Data-collection sampling config — the reference returns an ARRAY ([]), not {} (which malforms).
 route("GET", "/sampling", (c) => c.send(200, []));
 
 // OAuth token endpoint (IdentityServer-style: /Auth/connect/token)
@@ -2255,7 +2255,7 @@ route("POST", "/uwunet/claim", async (c) => {
   c.send(200, { ok: true, accountId: u.Id, username });
 });
 
-// Role lookups the client uses to unlock staff/dev UI (RecFlare auth `/role/*`). Single form
+// Role lookups the client uses to unlock staff/dev UI (the reference auth `/role/*`). Single form
 // `/role/{role}/{id}` -> a BARE JSON boolean (or an empty 404 for an account we don't have);
 // bulk form `/role/{role}?id=1&id=2` -> the subset of those ids that hold the role. God
 // accounts hold developer, moderator and screenshare; everyone else holds none.
@@ -2360,85 +2360,6 @@ route("GET", "/Room_server/dormroom/me", (c) => {
   });
 });
 
-// ---------------------------------------------------------------- RFPROXY mode
-// RFPROXY=1: any request no registered local route matches is forwarded to the
-// RecFlare LIVE server (same subdomain: econ.rec.net -> econ.recflare.net),
-// and the upstream's status + headers + raw body are echoed verbatim. This lets
-// a real game client run against RecFlare's live backend THROUGH our edge so we
-// can record what RecFlare answers, per line, in data/harvest/rfproxy.jsonl.
-const RFPROXY_ENABLED = process.env.RFPROXY === "1";
-const RFPROXY_LOG = path.join(DATA, "harvest", "rfproxy.jsonl");
-const RFPROXY_TARGET = (sub: string) => `https://${sub || "api"}.recflare.net`;
-const HOST_SUFFIX = "." + (process.env.UWU_NS_DOMAIN ?? "rec.net");
-// The upstream sub for a request host: "econ.rec.net" -> "econ", and an already
-// recflare.net host passes through (the edge can be aimed at either).
-const subForHost = (host: string): string =>
-  (host.split(",")[0] ?? "").trim().toLowerCase().replace(/:\d+$/, "").replace(
-    /\.(rec\.net|recflare\.net)$/,
-    "",
-  );
-async function rfProxy(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  sub: string,
-  p: string,
-  search: string,
-  body: string,
-) {
-  const url = `${RFPROXY_TARGET(sub)}${p}${search}`;
-  // Host/content-length describe OUR hop; node's fetch recomputes both for TLS
-  // to recflare.net (Cloudflare). Everything else (Authorization! content-type,
-  // accept, x-*) is forwarded untouched.
-  const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (v == null) continue;
-    const kl = k.toLowerCase();
-    if (kl === "host" || kl === "content-length" || kl === "connection") continue;
-    headers[k] = Array.isArray(v) ? v.join(", ") : String(v);
-  }
-  let r: Response;
-  try {
-    r = await fetch(url, {
-      method: req.method,
-      headers,
-      body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
-    });
-  } catch (e) {
-    log({ event: "rfproxy-error", sub, path: p, error: String(e) });
-    res.writeHead(502, { "content-type": "text/plain" });
-    res.end(`RFPROXY upstream error: ${String(e)}`);
-    return;
-  }
-  const buf = Buffer.from(await r.arrayBuffer());
-  // Echo the upstream headers minus the transport ones we can't replay honestly:
-  // content-length/transfer-encoding/content-encoding (fetch already decompressed
-  // the body) and our own hop's connection management.
-  const SKIP = new Set([
-    "content-length", "transfer-encoding", "content-encoding",
-    "connection", "keep-alive", "upgrade",
-  ]);
-  r.headers.forEach((value, name) => {
-    if (!SKIP.has(name.toLowerCase())) res.setHeader(name, value);
-  });
-  res.writeHead(r.status);
-  res.end(buf);
-  // One JSONL line per proxied request (small bodies inline as base64 for diffing).
-  const line: Record<string, unknown> = {
-    t: Date.now(),
-    method: req.method,
-    sub,
-    path: p,
-    reqAuth: (req.headers.authorization ?? "").slice(0, 12) || undefined,
-    status: r.status,
-    len: buf.byteLength,
-  };
-  if (buf.byteLength <= 20000) line.bodyB64 = buf.toString("base64");
-  try {
-    appendFileSync(RFPROXY_LOG, JSON.stringify(line) + "\n");
-  } catch {}
-  console.log(`RFPROXY ${r.status} ${sub}${p}`);
-}
-
 // ---------------------------------------------------------------- dispatch
 async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, useTls: boolean) {
   const host = String(req.headers.host ?? "").toLowerCase();
@@ -2501,13 +2422,6 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     body: body ? body.slice(0, 3000) : undefined,
   });
 
-  // RFPROXY=2: proxy EVERYTHING to RecFlare live (even locally-handled paths) so a game
-  // boot records the reference wire with full bodies — used for byte-diffing.
-  if (process.env.RFPROXY === "2") {
-    await rfProxy(req, res, subForHost(host), p, u.search, body);
-    return;
-  }
-
   for (const r of routes) {
     if (r.method === req.method && r.re.test(p)) {
       try {
@@ -2552,17 +2466,6 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     }
   }
 
-  // RFPROXY fallthrough: nothing local matched this path — forward it to the
-  // RecFlare live server for the same subdomain and echo the answer verbatim
-  // (HEAD included: the client's reachability probes read the real status).
-  // This sits BEFORE the HEAD/404 handlers, i.e. exactly where the old
-  // not-implemented 404 went, so RFPROXY=1 turns every fallthrough catch-all
-  // into a live pass-through.
-  if (RFPROXY_ENABLED) {
-    await rfProxy(req, res, subForHost(host), p, u.search, body);
-    return;
-  }
-
   // HEAD on any path the client probes for reachability: 200, empty.
   if (req.method === "HEAD") {
     res.writeHead(200);
@@ -2572,7 +2475,7 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
 
   // catch-all: log loudly (this is our harvest), then a FAST 404. The client
   // treats a definitive 404 as "not there, move on"; a 503 reads as a retryable
-  // server error that re-queues and starves the serial request pump (recflare's
+  // server error that re-queues and starves the serial request pump (the reference's
   // "dead-endpoint discipline"). Real-but-empty beats a slow/5xx black hole.
   log({ event: "unimplemented", host: req.headers.host, method: req.method, path: p });
   ctx.send(404, {

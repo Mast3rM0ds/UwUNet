@@ -58,11 +58,11 @@ windows-service driver that starts "the game" once the service is RUNNING:
   Referee) with portrewriter preload — in progress; check
   data/harvest/requests.jsonl for tls-sni hits.
 
-## Oct 26 (afternoon) — pivot to RecFlare 2025-build route (chosen)
+## Oct 26 (afternoon) — pivot to the reference 2025-build route (chosen)
 
 Given the finals-build wall is unsatisfiable public-key pinning (see
 docs/referee.md correction), switched to the community's proven route rather
-than more RE: RecFlare's **patch-2025** against build **20250718.01** (manifest
+than more RE: the reference's **patch-2025** against build **20250718.01** (manifest
 `1151455856673601091`), which bypasses Referee unconditionally and rewrites
 `ns.rec.net`→`ApiHost`.
 
@@ -72,17 +72,17 @@ Staged (no Steam creds needed yet): `tools/depotdownloader/` (DepotDownloader
 download, which needs the owner's Steam login + Steam Guard (run DepotDownloader
 with `!`). After that: `stage-patch.sh [ApiHost]` → `run.sh screen`. First goal:
 boot past `-99961`; then point ApiHost at our edge so the long-blocked harvest
-of real app-layer requests finally happens. RecFlare orgs: github.com/recflare
+of real app-layer requests finally happens. the reference orgs: github.com/the reference
 (server, patch-2025, patch-2026, client).
 
 ## Oct 26 (evening) — 2025 client boots to (apparent) login against UwUNet edge
 
-Milestone: the RecFlare-patched 20250718.01 client boots past anti-cheat AND
+Milestone: the reference-patched 20250718.01 client boots past anti-cheat AND
 completes its full startup HTTP sequence against the UwUNet edge, all 200s, no
 unimplemented endpoints left; then goes idle (login/title screen).
 
 Pipeline that works (client2025/run.sh):
-- RecFlare 2025 patch (Referee bypass) with ApiHost EMPTY.
+- the reference 2025 patch (Referee bypass) with ApiHost EMPTY.
 - `uwudns64.so` LD_PRELOAD maps *.rec.net -> 127.0.0.1 (covers BOTH BestHTTP and
   .NET HttpClient; the patch's URL-rewrite only covered BestHTTP — that was the
   first stall). `portrewriter.so` (now loopback-only) maps :443->8443, :80->8460.
@@ -92,13 +92,13 @@ Pipeline that works (client2025/run.sh):
   3. UwUNet CA imported into Proton prefix 471710 ROOT store (wine `reg import`;
      certutil is a stub) so .NET HttpClient trusts us. (reg blob in scratchpad.)
   4. `GET /` now serves the RecNet nameserver ENDPOINTS DOC (JSON service map,
-     mirrors recflare apps/ns) — content-negotiated vs the human HTML page. THIS
+     mirrors the reference apps/ns) — content-negotiated vs the human HTML page. THIS
      was the key unblock: the client discovers api/econ/etc. hosts from it.
-  5. config/v2 + gameconfigs served from RecFlare statics (server/static/).
+  5. config/v2 + gameconfigs served from the reference statics (server/static/).
   6. Live FIXTURES system: server/fixtures/<path>[.json] served per-request
      (raw bytes or JSON) so new GET endpoints are just file drops. Seeded:
      avatar/v1/defaultunlocked, defaultbaseavataritems (econ statics),
-     config/1b057e6e-... (opaque 18KB cdn blob, byte-for-byte from recflare).
+     config/1b057e6e-... (opaque 18KB cdn blob, byte-for-byte from the reference).
   7. HEAD / -> 200.
 
 Startup request order observed: ns GET / -> api gameconfigs -> cdn config blob
@@ -110,4 +110,4 @@ works if the client is still actively retrying).
 
 Next: LOGIN/auth flow (auth.rec.net). Edge has /Auth/connect/token + signup;
 need to harvest the 2025 client's exact login calls. Then accounts/me, rooms,
-match, and Photon (multiplayer) — PhotonConfig currently from recflare static.
+match, and Photon (multiplayer) — PhotonConfig currently from the reference static.

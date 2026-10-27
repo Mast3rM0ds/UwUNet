@@ -349,13 +349,13 @@ Rec Room's real public key, which we don't have.
    (Themida-protected) image.
 2. We can **never** satisfy this server-side — it would require Rec Room Inc.'s
    private key. Presenting any cert we can generate fails by construction.
-3. Therefore the only routes to a booting client are, exactly as RecFlare
-   concluded (docs/recflare.md):
+3. Therefore the only routes to a booting client are, exactly as the reference
+   concluded (docs/reference-api.md):
    a. **Bypass the pin client-side** — patch the comparison (the native
-      equivalent of RecFlare's `NotifyServerCertificate` no-op) inside
+      equivalent of the reference's `NotifyServerCertificate` no-op) inside
       `RefereeClientApp.exe`/`Referee.dll` at runtime (ptrace + /proc/pid/mem
       under wine — no Windows injector needed), OR
-   b. **Target an older build** (RecFlare's playable 20250718.01) whose boot
+   b. **Target an older build** (the reference's playable 20250718.01) whose boot
       path tolerates a dead `api.rec.net` with no provisioning pin at all.
 
 The 294-byte-hash *provisioning* hunt is therefore a dead end for "satisfy it":

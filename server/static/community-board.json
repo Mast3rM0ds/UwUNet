@@ -11,13 +11,13 @@
     ]
   },
   "CurrentAnnouncement": {
-    "Message": "Server powered by RecFlare",
-    "MoreInfoUrl": "https://recflare.net"
+    "Message": "Welcome to UwUNet :3",
+    "MoreInfoUrl": ""
   },
   "InstagramImages": [
     {
       "ImageName": "test.jpg",
-      "ImageUrl": "https://github.com/djdevin/recflare"
+      "ImageUrl": ""
     }
   ],
   "Videos": [

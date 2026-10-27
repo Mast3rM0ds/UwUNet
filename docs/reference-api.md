@@ -1,11 +1,11 @@
-# How RecFlare Does It — Research Notes (2026-10-26)
+# How the reference Does It — Research Notes (2026-10-26)
 
-Sources recflare/server, recflare/patch-2025 (+ its CLAUDE.md), recflare/patch
+Sources the reference server, the reference/patch-2025 (+ its CLAUDE.md), the reference/patch
 (= djdevin/recnet-plugin, BepInEx plugin, + its CLAUDE.md and README).
 
 ## TL;DR — the community never solved our problem, because they avoided it
 
-RecFlare **never impersonates the RefereeClientApp.exe boot chain** (no api.rec.net
+the reference **never impersonates the RefereeClientApp.exe boot chain** (no api.rec.net
 provisioning, no blobs-of-type-0, no 294-byte hash). They sidestep it two ways:
 
 1. **Target older builds** shipped via Steam DepotDownloader manifests:
@@ -20,7 +20,7 @@ provisioning, no blobs-of-type-0, no 294-byte hash). They sidestep it two ways:
 
 Devil's-advocate framing of our dead end: months of chasing the 294-byte hash is the
 road the community never traveled. Two readings, both good for us:
-- either the strict boot-service gating arrived with the 2026 finals (RecFlare's
+- either the strict boot-service gating arrived with the 2026 finals (the reference's
   playable 2025 setup has **no provisioning server at all** — so the 2025 chain
   tolerates a dead api.rec.net), or
 - the in-process Referee.dll checks are the actual game-side gate, and no-oping
@@ -32,7 +32,7 @@ a candidate new local lead: **patch Referee.dll in-process instead of feeding th
 provisioning channel**. The 294-byte-hash hunt (docs/referee.md) remains good RE
 documentation for upstream, but it may not be our critical path to playable.
 
-## How the two RecFlare clients work
+## How the two the reference clients work
 
 ### Native patch (2025 build): `2025Patch.dll` + `Injector.exe`
 - C++ DLL, MinHook, RVAs hardcoded into `GameAssembly.dll` and `Referee.dll`
@@ -56,7 +56,7 @@ documentation for upstream, but it may not be our critical path to playable.
   Photon server). The 2025 build negotiates **datagram encryption** silently, which
   self-hosted servers choke on; native patch forces `EnetPeer.IsTransportEncrypted →
   false` to stay on the payload path. Our 2026 build likely also needs this.
-- RecFlare's custom Photon server: **Luxon** (open-source-ish parts: `hst/luxon`,
+- the reference's custom Photon server: **Luxon** (open-source-ish parts: `hst/luxon`,
   `hst/netproxy`).
 
 ## Full hook inventory (patch-2025) — the community's final client bypass set
@@ -77,7 +77,7 @@ Plus voice re-key: Tachyon voice handshake RSA pubkey swap (`VoiceKeyXml` ini kn
 overrides the `<RSAKeyValue>` static right after the `.cctor` runs, game imports it
 itself), AT stays encrypted to the client-baked key otherwise.
 
-## Server-side contract wisdom recflarmed from `recflare/server`
+## Server-side contract wisdom recflarmed from `the reference server`
 
 - Client API base is **`ns.rec.net`**, not api.rec.net (BestHTTP rewrites `ns.rec.net`
   in URIs). api.rec.net is only the boot/provisioning host.
@@ -89,11 +89,11 @@ itself), AT stays encrypted to the client-baked key otherwise.
   a failing request retries with backoff, starving the entire queue (room-save blob
   → 30 s timeout, Photon disconnect from backlog). Response must be **instant** — a
   real 2xx or a real fast 404. NXDOMAIN or a black hole is poison. Never block a
-  recflare/`*.rec.net` host at DNS — stub it server-side first, then (optionally)
+  the reference/`*.rec.net` host at DNS — stub it server-side first, then (optionally)
   DNS-block.
 - `datacollection` must return `200 {"success":true}` immediately.
 - `cards`, `moderation`, `platformnotifications` → fast 404 is fine.
-- `PlayerReporting/v1/deviceId` → **still unsolved by RecFlare** when a genuine DUID
+- `PlayerReporting/v1/deviceId` → **still unsolved by the reference** when a genuine DUID
   mismatch occurs (they suppress on the client instead); the accepting response shape
   is unknown; where the "old" id comes from is unknown.
 - Image/content signatures need `key-id=KEY:RSA:p1.rec.net`, signed with Rec Room's
@@ -108,24 +108,24 @@ itself), AT stays encrypted to the client-baked key otherwise.
 1. **Our local lead was likely over-weighted.** The 294-byte-hash provisioning hunt
    is one road; the community-favored road is to **no-op Referee.dll in-process**,
    treating `-99961` only as a probe signal, never needing to answer it.
-2. Either way, `-99961` was bypassed to a playable 2025 client by RecFlare without any
+2. Either way, `-99961` was bypassed to a playable 2025 client by the reference without any
    provisioning server.
 3. **Wine-specific advantage**: under Proton/wine, every Windows memory operation
    inside the game process (create thread/LoadLibrary, patch bytes) is available to us
    via ptrace + `/proc/pid/mem` — no Windows DLL needed. We can do exactly what
    `Injector.exe` + MinHook do, but with a Linux-native tool.
 4. **Our `uwudns64` + `uwuhook` already handle** the winsock-layer equivalents of
-   RecFlare's winsock hooks. We just need to add the in-process hooks.
+   the reference's winsock hooks. We just need to add the in-process hooks.
 
 ## Candidate next steps (upstream-friendly)
 
 - **Fastest to playable on our depot**: download the 20250718.01 build
   (`depotdownloader -app 471710 -depot 471711 -manifest 1151455856673601091`), run it
   under wine with `Injector.exe` + `2025Patch.dll` + `2025patch.ini`, set
-  `ApiHost=` our edge, and see if RecFlare's proven client boots against UwUNet.
+  `ApiHost=` our edge, and see if the reference's proven client boots against UwUNet.
   If yes, we get a working client today with zero new RE work.
 - **Longer-term / upstream contribution**: a wine-native "referee-silencer" that
   no-ops our 2026 build's Referee.dll checks (RVAs differ; find equivalents like
-  RecFlare did — signature/scan).
+  the reference did — signature/scan).
 - Keep the 294-byte-hash research as RE documentation for upstream (worth sharing,
   but not our critical path to playable).

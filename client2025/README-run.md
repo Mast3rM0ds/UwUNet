@@ -14,7 +14,7 @@ reaches you (replace `YOUR_STEAM_USERNAME`):
 - This downloads several GB; let it finish (it resumes if interrupted).
 - When done, `/home/bloink/UwUNet/client2025/depot/Recroom_Release.exe` exists.
 
-## 2. Stage the RecFlare patch into the build
+## 2. Stage the 2025 client patch into the build
 
     /home/bloink/UwUNet/client2025/stage-patch.sh            # boot test, no backend
     # or point the game's API at the UwUNet edge:

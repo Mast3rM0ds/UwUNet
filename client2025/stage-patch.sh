@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stage-patch.sh — copy the RecFlare 2025 patch into the downloaded 20250718
+# stage-patch.sh — copy the 2025 client patch into the downloaded 20250718
 # build and write a UwUNet-pointed 2025patch.ini. Run AFTER the depot download.
 #
 #   ./stage-patch.sh [ApiHost]
