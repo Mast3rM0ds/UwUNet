@@ -1072,14 +1072,14 @@
 	},
 	{
 		"Key": "Growth.MakerPenIntroCreationCutoff",
-		"Value": "2022-05-11 00:00",
+		"Value": "2099-01-01 00:00",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
 	},
 	{
 		"Key": "Growth.MakerPenIntroDormOnly",
-		"Value": "true",
+		"Value": "false",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null

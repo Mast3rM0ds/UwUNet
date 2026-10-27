@@ -56,7 +56,17 @@ type User = {
   PlatformType?: string; // "0" = Steam
   PlatformId?: string;   // SteamID64 etc.
 };
-type Db = { users: Record<string, User>; refresh: Record<string, string>; nextId?: number };
+// A friend-graph edge from one player's point of view: type 0=none, 1=request sent, 2=request
+// received, 3=friends; fav/ign/mut are that player's own 0/1 flags toward the other.
+type Rel = { type: number; fav: number; ign: number; mut: number };
+type Db = {
+  users: Record<string, User>;
+  refresh: Record<string, string>;
+  nextId?: number;
+  // relationships[a][b] = a's edge toward b. Stored on both sides so each player's /get is a
+  // direct lookup and each keeps their own flags.
+  relationships?: Record<string, Record<string, Rel>>;
+};
 const DB_FILE = path.join(DATA, "uwunet.db.json");
 function loadDb(): Db {
   // Try the live file, then the last-good backup. A valid DB must be an object with `users`,
@@ -74,7 +84,7 @@ function loadDb(): Db {
   if (existsSync(DB_FILE)) {
     try { renameSync(DB_FILE, `${DB_FILE}.corrupt-${Date.now()}`); } catch {}
   }
-  return { users: {}, refresh: {}, nextId: 1000000 };
+  return { users: {}, refresh: {}, nextId: 1000000, relationships: {} };
 }
 // RecNet account ids are integers; allocate sequentially (stored as a string).
 function allocAccountId(): string {
@@ -1411,10 +1421,14 @@ route("GET", "/thread/chatPrivacySetting", (c) => {
 
 // --- api.rec.net monolith surface ---
 // Online-friend count (the reference apps/api routes/social.ts "/api/messages/v1/
-// friendOnlineStatus": { success, value: { FriendsOnlineCount } }); no friends graph → 0.
+// friendOnlineStatus": { success, value: { FriendsOnlineCount } }). Count friends who currently
+// have presence (roughly: logged in this session) — relationshipsForPlayer is defined below but
+// this closure only reads it at request time, after module load.
 route("POST", "/api/messages/v1/friendOnlineStatus", (c) => {
   if (!c.authUser) return c.send(401, {});
-  c.send(200, { success: true, value: { FriendsOnlineCount: 0 } });
+  const online = relationshipsForPlayer(selfPlayerId(c))
+    .filter((r) => r.RelationshipType === REL_FRIEND && presenceById.has(r.PlayerID)).length;
+  c.send(200, { success: true, value: { FriendsOnlineCount: online } });
 });
 // External platform invite referrers (NOT in the reference — GUESSED [] for a fresh account;
 // the client 404-tolerated this before, so it has an empty-list path).
@@ -2118,8 +2132,104 @@ route("GET", "/api/config/v1/backtrace", (c) =>
   }));
 // Messages inbox — empty for a fresh account.
 route("GET", "/api/messages/v2/get", (c) => c.send(200, []));
-// Relationships (friends/blocks/etc.) — none for a fresh account.
-route("GET", "/api/relationships/v2/get", (c) => c.send(200, []));
+// --- relationships (the friend graph behind the Friends tab) --------------------------------
+// RelationshipType on the wire: 0=none, 1=request sent, 2=request received, 3=friends. The DTO
+// is the relationship from the CALLER's point of view (PlayerID is the OTHER player).
+const REL_NONE = 0, REL_SENT = 1, REL_RECV = 2, REL_FRIEND = 3;
+type RelDto = { PlayerID: number; RelationshipType: number; Favorited: number; Ignored: number; Muted: number };
+const relFor = (a: number, b: number): Rel | undefined => db.relationships?.[String(a)]?.[String(b)];
+function relSet(a: number, b: number, patch: Partial<Rel>) {
+  (db.relationships ??= {});
+  const ka = String(a);
+  (db.relationships[ka] ??= {});
+  const cur = db.relationships[ka][String(b)] ?? { type: REL_NONE, fav: 0, ign: 0, mut: 0 };
+  db.relationships[ka][String(b)] = { ...cur, ...patch };
+}
+const relDto = (a: number, b: number): RelDto => {
+  const r = relFor(a, b) ?? { type: REL_NONE, fav: 0, ign: 0, mut: 0 };
+  return { PlayerID: b, RelationshipType: r.type, Favorited: r.fav, Ignored: r.ign, Muted: r.mut };
+};
+// Every edge the caller has an opinion about (a live type, or a surviving flag).
+const relationshipsForPlayer = (id: number): RelDto[] =>
+  Object.entries(db.relationships?.[String(id)] ?? {})
+    .filter(([, r]) => r.type !== REL_NONE || r.fav || r.ign || r.mut)
+    .map(([b]) => relDto(id, Number(b)));
+// Friend-graph transitions. Edges are written on BOTH sides so each player's /get is a lookup.
+function sendFriendRequest(id: number, target: number) {
+  const t = relFor(id, target)?.type ?? REL_NONE;
+  if (t === REL_FRIEND || t === REL_SENT) return; // no-op
+  if (t === REL_RECV) { relSet(id, target, { type: REL_FRIEND }); relSet(target, id, { type: REL_FRIEND }); } // crossing -> auto-accept
+  else { relSet(id, target, { type: REL_SENT }); relSet(target, id, { type: REL_RECV }); }
+  saveDb();
+}
+function acceptFriendRequest(id: number, target: number) {
+  if ((relFor(id, target)?.type ?? REL_NONE) !== REL_RECV) return; // nothing pending
+  relSet(id, target, { type: REL_FRIEND }); relSet(target, id, { type: REL_FRIEND });
+  saveDb();
+}
+function endFriendship(id: number, target: number) { // unfriend / cancel / decline
+  relSet(id, target, { type: REL_NONE }); relSet(target, id, { type: REL_NONE });
+  saveDb();
+}
+function makeFriends(id: number, target: number) { // direct add, no pending step
+  relSet(id, target, { type: REL_FRIEND }); relSet(target, id, { type: REL_FRIEND });
+  saveDb();
+}
+// Target player id for a mutation: ?playerId=/?id= query first, else the JSON/form body.
+async function relTarget(c: Ctx): Promise<number | null> {
+  const q = c.query.get("playerId") ?? c.query.get("id");
+  if (q != null) { const n = Number.parseInt(q, 10); if (!Number.isNaN(n)) return n; }
+  const b = await parseBodyJson(c);
+  const v = b.playerId ?? b.id ?? b.PlayerId ?? b.PlayerID;
+  if (v != null) { const n = Number.parseInt(String(v), 10); if (!Number.isNaN(n)) return n; }
+  return null;
+}
+route("GET", "/api/relationships/v2/get", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, relationshipsForPlayer(selfPlayerId(c)));
+});
+// Mutual friends with ?id= — the intersection of both players' friend sets.
+route("GET", "/api/relationships/mutualfriends", async (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  const target = await relTarget(c);
+  if (target === null || target === id) return c.send(200, []);
+  const friendsOf = (p: number) => new Set(
+    relationshipsForPlayer(p).filter((r) => r.RelationshipType === REL_FRIEND).map((r) => r.PlayerID),
+  );
+  const mine = friendsOf(id), theirs = friendsOf(target);
+  c.send(200, [...mine].filter((x) => theirs.has(x)));
+});
+// The four friend-graph mutations — GET and POST both, target via ?id=, returns caller's DTO.
+const relMutation = (fn: (id: number, target: number) => void) => async (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  const target = await relTarget(c);
+  if (target === null || target === id) return c.send(400, { error: "invalid player id" });
+  fn(id, target);
+  c.send(200, relDto(id, target));
+};
+for (const m of ["GET", "POST"]) {
+  route(m, "/api/relationships/v2/sendfriendrequest", relMutation(sendFriendRequest));
+  route(m, "/api/relationships/v2/acceptfriendrequest", relMutation(acceptFriendRequest));
+  route(m, "/api/relationships/v2/removefriend", relMutation(endFriendship));
+  route(m, "/api/relationships/v2/addfriend", relMutation(makeFriends));
+}
+// Per-side flags: ignore/mute/favorite and their inverses. Return {Success, Message}.
+const relFlag = (field: "fav" | "ign" | "mut", value: number) => async (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  const target = await relTarget(c);
+  if (target === null || target === id) return c.send(400, { error: "invalid player id" });
+  relSet(id, target, { [field]: value }); saveDb();
+  c.send(200, { Success: true, Message: "" });
+};
+route("POST", "/api/relationships/v1/ignore", relFlag("ign", 1));
+route("POST", "/api/relationships/v1/unignore", relFlag("ign", 0));
+route("POST", "/api/relationships/v1/mute", relFlag("mut", 1));
+route("POST", "/api/relationships/v1/unmute", relFlag("mut", 0));
+route("POST", "/api/relationships/v1/favorite", relFlag("fav", 1));
+route("POST", "/api/relationships/v1/unfavorite", relFlag("fav", 0));
 // Chat threads — none yet.
 route("GET", "/thread", (c) => c.send(200, []));
 route("GET", "/thread/party", (c) => c.send(200, {}));
