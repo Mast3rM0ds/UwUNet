@@ -258,7 +258,10 @@ function route(method: string, pattern: string, h: Handler) {
   const re = new RegExp(
     "^" +
       pattern
-        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+        // NOTE: must NOT escape { } here — doing so turned "{roomId}" into "\{roomId\}",
+        // which the next replace (/\{(\w+)\}/) could no longer match, so every {param}
+        // route compiled to a literal path and 404'd (static and ** routes were unaffected).
+        .replace(/[.+?^$()|[\]\\]/g, "\\$&")
         .replace(/\{(\w+)\}/g, "([^/]+)")
         .replace(/\*\*/g, ".*") +
       "$",
@@ -530,6 +533,10 @@ route("POST", "/connect/token", async (c) => {
     // returned photonRoomId:"" and the client had no room to connect Photon to. RecFlare seeds
     // this at account creation; we seed on any token issue if there's no live presence yet.
     const uid = Number(u.Id);
+    // Record the client-reported deviceClass (screen/PC = 2) so the heartbeat echoes it and
+    // presence stays in sync. Default 0 only when the client sends nothing.
+    const dc = Number(b.device_class ?? b.deviceClass ?? 0);
+    deviceClassById.set(uid, Number.isFinite(dc) ? dc : 0);
     if (!presenceById.has(uid)) presenceById.set(uid, orientationRoomInstance());
     const at = mintAccessToken(u, ver);
     const rt = newToken("rt", u.Id);
@@ -671,6 +678,12 @@ const GAME_VERSION = "20250718.01";
 // joined one, matchmaking logs "local presence is out-of-sync" and kicks to the title with
 // "An error occurred". Cleared on logout. (In-memory — one process, resets on relaunch.)
 const presenceById = new Map<number, unknown>();
+// Per-account deviceClass reported by the client in the /connect/token body (`device_class`).
+// A screen/PC client sends device_class=2; the heartbeat playerDto MUST echo that exact value.
+// Hardcoding 0 made the client's local presence (deviceClass 2) disagree with the heartbeat,
+// which it reports as "RecNet presence heartbeat response indicates local presence is
+// out-of-sync!" every ~30s. RecFlare stores deviceClass from the token request and replays it.
+const deviceClassById = new Map<number, number>();
 
 // PlayerDto: the player's presence as the client reads it (GET /player, POST
 // /player/login, /player/heartbeat). The matchmaking loop deserializes this; an empty
@@ -679,7 +692,7 @@ const presenceById = new Map<number, unknown>();
 // null = not in a room yet.
 const playerDto = (playerId: number, roomInstance: unknown = null) => ({
   appVersion: GAME_VERSION,
-  deviceClass: 0,
+  deviceClass: deviceClassById.get(playerId) ?? 0,
   errorCode: 0,
   isOnline: true,
   playerId,
