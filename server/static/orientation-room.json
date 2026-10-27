@@ -1,0 +1,106 @@
+{
+  "RoomId": 13,
+  "Name": "Orientation",
+  "Description": "An introductory tour of Rec Room!",
+  "ImageName": "Orientation.jpg",
+  "WarningMask": 0,
+  "CustomWarning": null,
+  "CreatorAccountId": 1,
+  "State": 0,
+  "Accessibility": 1,
+  "PublishState": 0,
+  "SupportsLevelVoting": false,
+  "IsRRO": true,
+  "IsRecRoomApproved": false,
+  "ExcludeFromLists": false,
+  "ExcludeFromSearch": false,
+  "SupportsScreens": true,
+  "SupportsWalkVR": true,
+  "SupportsTeleportVR": true,
+  "SupportsVRLow": true,
+  "SupportsQuest2": true,
+  "SupportsMobile": true,
+  "SupportsJuniors": true,
+  "MinLevel": 0,
+  "AgeRating": 2,
+  "CreatedAt": "2026-03-11T06:48:51.323621Z",
+  "PublishedAt": "2026-03-11T06:48:51.323621Z",
+  "BecameRRStudioRoomAt": null,
+  "Stats": {
+    "CheerCount": 38,
+    "FavoriteCount": 26,
+    "VisitorCount": 0,
+    "VisitCount": 1430
+  },
+  "RankingContext": null,
+  "IsDorm": false,
+  "IsPlacePlay": false,
+  "MaxPlayerCalculationMode": 0,
+  "MaxPlayers": 1,
+  "CloningAllowed": false,
+  "DisableMicAutoMute": false,
+  "DisableRoomComments": true,
+  "EncryptVoiceChat": false,
+  "ToxmodEnabled": true,
+  "LoadScreenLocked": false,
+  "UgcVersion": 1,
+  "PersistenceVersion": 0,
+  "UgcSubVersion": null,
+  "MinUgcSubVersion": null,
+  "AutoLocalizeRoom": false,
+  "LocalizationContext": {
+    "TargetLocale": null,
+    "Scope": null,
+    "LocalizedFields": [
+      "Description",
+      "CustomWarning"
+    ]
+  },
+  "IsDeveloperOwned": true,
+  "RankedEntityId": "13",
+  "Roles": [
+    {
+      "AccountId": 1,
+      "Role": 255,
+      "LastChangedByAccountId": null,
+      "InvitedRole": 0
+    },
+    {
+      "AccountId": 2,
+      "Role": 30,
+      "LastChangedByAccountId": null,
+      "InvitedRole": 0
+    }
+  ],
+  "IsJuniorCreated": false,
+  "PromoImages": [],
+  "PromoExternalContent": [],
+  "LoadScreens": [],
+  "RestrictedCircuitsAllowListNames": [],
+  "BoostCount": 0,
+  "CurrentSnapshotId": null,
+  "CCU": null,
+  "SubRooms": [
+    {
+      "SubRoomId": 23,
+      "RoomId": 13,
+      "CreatorAccountId": null,
+      "UnitySceneId": "c79709d8-a31b-48aa-9eb8-cc31ba9505e8",
+      "Name": "Home",
+      "LastModeratedSaveModerationState": 0,
+      "IsSandbox": false,
+      "MaxPlayers": 1,
+      "Accessibility": 1,
+      "ShouldAutoStageSaves": true,
+      "StagedSubRoomDataSaveId": null,
+      "CurrentSave": null
+    }
+  ],
+  "Badges": [],
+  "Tags": [
+    {
+      "Tag": "rro",
+      "Type": 2
+    }
+  ]
+}

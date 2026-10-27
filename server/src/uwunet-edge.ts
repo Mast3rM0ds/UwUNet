@@ -245,6 +245,9 @@ type Ctx = {
   body: string;
   authUser: User | null;
   send: (status: number, obj: unknown) => void;
+  // Zero-length 200 body (RecFlare's `c.body(null, 200)`). The client treats an empty body as
+  // a void/success ack; a `{}` here is parsed as a typed object and fails ("Malformed '{}'").
+  empty: () => void;
 };
 
 type Handler = (ctx: Ctx) => Promise<void> | void;
@@ -399,6 +402,33 @@ const defaultAvatar = readStatic("default-avatar.json", {
   HairColor: "",
 });
 
+const DORM_SCENE = "76d98498-60a1-430c-ab76-b54a29b7a163"; // base sandbox/dorm scene
+// The CANONICAL dorm template: RecFlare's room 1 (DORM_TEMPLATE_ROOM_ID), fetched live from
+// rooms.recflare.net/rooms/1 — the exact empty-dorm RoomDto real clients accept. getOrCreate-
+// DormRoom clones this per account. We spread it and override ONLY the identity fields, so the
+// whole shape (ImageName "DormRoom.jpg", CurrentSave: null, no subroom blobs, every flag) is
+// verbatim what the client's strict parser expects. Hand-built variants all failed "Malformed
+// Response"; this one matches a known-good room byte-for-byte except identity.
+const roomTemplate = readStatic("room-template.json", {}) as Record<string, unknown>;
+const templateSubRoom = (Array.isArray(roomTemplate.SubRooms) && roomTemplate.SubRooms[0]) || {};
+// Orientation (room 13) is a PUBLIC system room, identical for every account, so we serve
+// RecFlare's live /rooms/13?include=767277 body verbatim rather than mangling the dorm template.
+// This eliminated the room-DTO as a suspect for the `Enumerable.First` abort during room-load:
+// the dorm template had IsSandbox:true on its subroom (orientation's is false), which makes the
+// client load the maker-pen/circuit/save path and `.First()` an empty save/circuit collection.
+const orientationRoomStatic = readStatic("orientation-room.json", {}) as Record<string, unknown>;
+const dormRoomDto = (id: number, username: string) => ({
+  ...roomTemplate,
+  RoomId: id,
+  Name: `@${username}'s Dorm`,
+  CreatorAccountId: id,
+  RankedEntityId: String(id),
+  Stats: { CheerCount: 0, FavoriteCount: 0, VisitorCount: 0, VisitCount: 0 },
+  Roles: [{ AccountId: id, Role: 255, LastChangedByAccountId: null, InvitedRole: 0 }],
+  // CurrentSave stays null (template default) = built-in empty dorm, no content download.
+  SubRooms: [{ ...templateSubRoom, RoomId: id, CreatorAccountId: id }],
+});
+
 // versioncheck/v4: the boot's "connect to RecNet" step needs a real 200 here
 // (404 -> "Failed to connect to RecNet"). This shape was accepted (no
 // "Malformed Response"); keep it.
@@ -494,6 +524,13 @@ route("POST", "/connect/token", async (c) => {
   log({ event: "token", grant, platform: b.platform, platform_id: b.platform_id });
 
   const issue = (u: User, created: boolean) => {
+    // Seed the Orientation (-2) presence at the EARLIEST auth point: the client calls GET
+    // /player/connection-info right after /connect/token (before /player/login), and that
+    // response's photonRoomId/region come from the stored presence. Without the seed here it
+    // returned photonRoomId:"" and the client had no room to connect Photon to. RecFlare seeds
+    // this at account creation; we seed on any token issue if there's no live presence yet.
+    const uid = Number(u.Id);
+    if (!presenceById.has(uid)) presenceById.set(uid, orientationRoomInstance());
     const at = mintAccessToken(u, ver);
     const rt = newToken("rt", u.Id);
     db.refresh[rt] = u.Username.toLowerCase();
@@ -625,28 +662,332 @@ const parseIds = (c: Ctx): number[] => {
 };
 
 // --- match.rec.net (presence + realtime handshake) ---
-route("POST", "/player/login", (c) => c.send(200, {}));     // record session lock; empty ack
-route("POST", "/player/logout", (c) => c.send(200, {}));    // clear presence; empty ack
+// Shapes from recflare/server apps/match/src/{openapi,match.app}.ts.
+const GAME_VERSION = "20250718.01";
+
+// Server-side presence: which room instance each player is currently in. Set when they
+// matchmake (see /matchmake/dorm), read back in the heartbeat. The client compares the
+// heartbeat's roomInstance to its own; if the server says "no room" after the client just
+// joined one, matchmaking logs "local presence is out-of-sync" and kicks to the title with
+// "An error occurred". Cleared on logout. (In-memory — one process, resets on relaunch.)
+const presenceById = new Map<number, unknown>();
+
+// PlayerDto: the player's presence as the client reads it (GET /player, POST
+// /player/login, /player/heartbeat). The matchmaking loop deserializes this; an empty
+// `{}` makes it "Received malformed RecNet response" -> matchmake retries forever. The
+// photon*/voice*/experiments keys must be PRESENT (null) even in presence. roomInstance
+// null = not in a room yet.
+const playerDto = (playerId: number, roomInstance: unknown = null) => ({
+  appVersion: GAME_VERSION,
+  deviceClass: 0,
+  errorCode: 0,
+  isOnline: true,
+  playerId,
+  roomInstance,
+  statusVisibility: 0,
+  vrMovementMode: 1,
+  platform: 0,
+  photonAuthToken: null,
+  photonRealtimeAppId: null,
+  photonVoiceAppId: null,
+  photonChatAppId: null,
+  photonRegion: null,
+  photonRoomId: null,
+  voiceConnectionInfo: null,
+  voiceServerId: null,
+  experiments: null,
+});
+const selfPlayerId = (c: Ctx) => (c.authUser ? Number(c.authUser.Id) : 1000000);
+
+// Session LoginLock, recorded at /player/login and verified on each heartbeat. RecFlare's
+// login acks EMPTY (not a PlayerDto); the heartbeat returns the presence unless the posted
+// lock no longer matches (superseded session). Our old login returned a PlayerDto, which the
+// client read as a presence that disagreed with its local session.
+const loginLockById = new Map<number, string>();
+const parseLoginLock = (c: Ctx): string | undefined => {
+  try { return new URLSearchParams(c.body || "").get("LoginLock") ?? undefined; } catch { return undefined; }
+};
+
+// New players are placed in ORIENTATION (RoomId 13) by the client's new-user flow, which
+// loads the scene LOCALLY (no matchmake) and tags its instance with the sentinel id -2. The
+// presence heartbeat MUST echo roomInstanceId -2 or the client declares "RecNet presence
+// heartbeat ... local presence is out-of-sync!" and sticks forever at "preparing". RecFlare's
+// auth worker seeds this presence at account creation (placeNewPlayerInOrientation); we seed
+// it at login when the player has no live presence yet. Shape mirrors match's roomInstance.
+const ORIENTATION_INSTANCE_ID = -2;
+const ORIENTATION_ROOM_ID = 13;
+const ORIENTATION_SCENE = "c79709d8-a31b-48aa-9eb8-cc31ba9505e8"; // room 13 SubRoom 23 UnitySceneId
+// The Orientation RoomDto the client resolves via ?name=SocialOrientation/Orientation. Same
+// proven shape as dormRoomDto (the client parses that one fine), but roomId 13, the Orientation
+// scene, and IsDorm:false — so it is CONSISTENT with the seeded -2 presence (roomId 13). A `{}`
+// here is "Malformed Response: '{}'" (fatal ~28s); the caller's dorm RoomDto gave a RoomId that
+// disagreed with the -2 presence and stalled the scene load.
+const orientationRoomDto = () => orientationRoomStatic;
+// Room-by-id lookup: Orientation (13) -> the Orientation DTO; everything else is a dorm.
+const roomDtoFor = (id: number) =>
+  id === ORIENTATION_ROOM_ID ? orientationRoomDto() : dormRoomDto(id, userById(id)?.Username ?? `Player${id}`);
+const orientationRoomInstance = () => {
+  let region = "usw";
+  try {
+    const pf = path.join(DATA, "photon.json");
+    if (existsSync(pf)) region = (JSON.parse(readFileSync(pf, "utf8")).region as string) || "usw";
+  } catch { /* default */ }
+  return {
+    roomInstanceId: ORIENTATION_INSTANCE_ID,
+    roomId: ORIENTATION_ROOM_ID,
+    subRoomId: 23,
+    roomInstanceType: 0, // Public
+    location: ORIENTATION_SCENE,
+    dataBlob: "",
+    eventId: 0,
+    clubId: 0,
+    roomCode: "",
+    photonRegion: region,
+    photonRegionId: region,
+    photonRoomId: `rec.${ORIENTATION_ROOM_ID}`,
+    name: "^Orientation",
+    maxCapacity: 1, // Orientation is solo (RecFlare room 13 MaxPlayers 1) — matches orientationRoomDto
+    isFull: false,
+    isPrivate: false,
+    isInProgress: false,
+    EncryptVoiceChat: false,
+  };
+};
+const isOrientationPresence = (p: unknown) =>
+  !!p && typeof p === "object" && (p as Record<string, unknown>).roomInstanceId === ORIENTATION_INSTANCE_ID;
+
+route("POST", "/player/login", (c) => {
+  const id = selfPlayerId(c);
+  const lock = parseLoginLock(c);
+  if (lock) loginLockById.set(id, lock);
+  // Seed the Orientation presence so the first heartbeat echoes roomInstanceId -2 and the
+  // client (locally loading Orientation) stays in sync. Don't clobber a live room presence
+  // set by a later matchmake.
+  if (!presenceById.has(id)) presenceById.set(id, orientationRoomInstance());
+  c.empty(); // RecFlare acks an EMPTY body here, NOT a PlayerDto
+});
+route("POST", "/player/logout", (c) => {           // empty ack
+  const id = selfPlayerId(c);
+  // The client fires a spurious logout right after the Orientation seed; clearing presence
+  // then would wipe the -2 seed and bounce the new player out. Preserve the Orientation seed.
+  if (!isOrientationPresence(presenceById.get(id))) {
+    presenceById.delete(id);
+    loginLockById.delete(id);
+  }
+  c.empty();
+});
 route("POST", "/player/exclusivelogin", (c) => c.send(200, { errorCode: 0 }));
-route("POST", "/player/verifylock", (c) => c.send(200, {}));
-route("POST", "/player/heartbeat", (c) => c.send(200, {})); // presence keepalive; empty ack
-route("GET", "/player/qos", (c) => c.send(200, []));        // region probe list (none)
-route("PUT", "/player/photonregionpings", (c) => c.send(200, {}));
-route("PUT", "/player/gameserverregionpings", (c) => c.send(200, {}));
-// Photon creds: all-null = "not in a room yet" (real creds come when we have a relay).
+route("POST", "/player/verifylock", (c) => c.empty());
+route("POST", "/player/heartbeat", (c) => {
+  const id = selfPlayerId(c);
+  // Verify the beat still owns the session. A posted lock that disagrees with the one
+  // recorded at login belongs to a superseded session -> return EMPTY so that stale client
+  // stops (RecFlare's behavior). The current session's lock always matches, so it gets the
+  // presence payload back and stays in sync.
+  const posted = parseLoginLock(c);
+  const stored = loginLockById.get(id);
+  if (posted && stored && posted !== stored) { c.empty(); return; }
+  c.send(200, playerDto(id, presenceById.get(id) ?? null));
+});
+// Status visibility toggle — RecFlare acks with an EMPTY body (not a PlayerDto, not {}).
+route("PUT", "/player/statusvisibility", (c) => c.empty());
+// GET /player — presence for the caller (or a default online player when no ids given).
+route("GET", "/player", (c) => {
+  const id = selfPlayerId(c);
+  c.send(200, [{ ...playerDto(id, presenceById.get(id) ?? null), isOnline: true }]);
+});
+// QoS probe targets — Rec Room's own region endpoints, served verbatim. An empty list
+// makes NetworkPingHandler.GetNetworkRegionPings throw NullReferenceException.
+route("GET", "/player/qos", (c) =>
+  c.send(200, [
+    { id: "us-west1", address: "34.169.254.144:50000" },
+    { id: "europe-west1", address: "35.205.141.119:50000" },
+    { id: "asia-northeast1", address: "35.200.67.228:50000" },
+    { id: "us-east1", address: "34.73.244.122:50000" },
+    { id: "us-central1", address: "34.69.179.51:50000" },
+    { id: "northamerica-northeast1", address: "34.152.4.100:50000" },
+  ]));
+route("PUT", "/player/photonregionpings", (c) => c.empty());
+route("PUT", "/player/gameserverregionpings", (c) => c.empty());
+// connection-info: the realtime creds in the {success,value,error} envelope. We have no
+// Photon relay yet, so the ids/room are empty strings (valid shape, "in no instance").
+// experiments must be a full ConnectionExperiments object (verbatim from the reference).
 route("GET", "/player/connection-info", (c) => {
   if (!c.authUser) return c.send(401, {});
+  // Photon realtime credentials, read fresh from data/photon.json (gitignored) so app
+  // ids aren't baked into source: {realtimeAppId, voiceAppId?, chatAppId?, region?}.
+  let ph: Record<string, string> = {};
+  try {
+    const pf = path.join(DATA, "photon.json");
+    if (existsSync(pf)) ph = JSON.parse(readFileSync(pf, "utf8"));
+  } catch { /* no photon config yet */ }
+  // The Photon room name the client joins comes from HERE, not the matchmake response: it
+  // reads the roomInstance the player's stored presence names (set by /matchmake/dorm). An
+  // empty photonRoomId makes PUN fail "JoinOrCreateRoom failed. A roomname is required."
+  const presence = presenceById.get(selfPlayerId(c)) as Record<string, unknown> | undefined;
+  const photonRoomId = (presence?.photonRoomId as string) ?? "";
+  const photonRegion = (presence?.photonRegion as string) ?? ph.region ?? "usw";
   c.send(200, {
-    photonAuthToken: null,
-    photonRealtimeAppId: null,
-    photonVoiceAppId: null,
-    photonChatAppId: null,
-    photonRegion: null,
-    photonRoomId: null,
-    voiceConnectionInfo: null,
-    voiceServerId: null,
-    experiments: null,
+    success: true,
+    value: {
+      photonAuthToken: "",
+      photonRealtimeAppId: ph.realtimeAppId ?? "",
+      photonVoiceAppId: ph.voiceAppId ?? "",
+      photonChatAppId: ph.chatAppId ?? "",
+      photonRegion,
+      photonRoomId,
+      voiceConnectionInfo: "",
+      voiceServerId: "",
+      experiments: {
+        networkTransformSyncInterval: 10.0,
+        shouldUseUnreliableOnChange: false,
+        shouldAvoidDiscontinuityRPCs: true,
+        shouldAvoidRedundantDiscontinuity: false,
+        r2RuntimeStaticBaking: true,
+        r2AutoEmbodiment: true,
+        r2RuntimeStaticBakingMinShapeThreshold: 1,
+        r2UseCheapReplicas: true,
+        shouldUseGameServerNetworking: false,
+      },
+    },
+    error: null,
   });
+});
+
+// --- match.rec.net matchmaking ---
+// PLAY sends the caller into their own dorm. `/matchmake/dorm` (and `/matchmake/none`,
+// which falls back to the dorm) return a MatchmakeResponse; the client reads roomInstance
+// for the Photon coordinates + Unity scene, then connects to Photon. Two hard rules from
+// RecFlare's spec: (1) `correlationId` MUST echo the request's CorrelationId or the client
+// refuses with "Unable to connect to RecNet game session"; (2) `location` is the dorm's
+// Unity scene id — empty makes the client reject the instance. photonRoomId is the Photon
+// room co-joiners share; deterministic per dorm so re-joins land in the same room.
+const EMPTY_GUID = "00000000-0000-0000-0000-000000000000";
+const dormMatchmake = (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  let correlationId = EMPTY_GUID;
+  try {
+    const q = new URLSearchParams(c.body || "");
+    correlationId = q.get("CorrelationId") || q.get("correlationId") || correlationId;
+  } catch { /* non-form body */ }
+  const region = (() => {
+    try {
+      const pf = path.join(DATA, "photon.json");
+      if (existsSync(pf)) return (JSON.parse(readFileSync(pf, "utf8")).region as string) || "usw";
+    } catch { /* default */ }
+    return "usw";
+  })();
+  const roomInstance = {
+    roomInstanceId: id,
+    roomId: id,
+    subRoomId: 1,
+    roomInstanceType: 1, // Dormroom
+    location: DORM_SCENE,
+    dataBlob: "",
+    eventId: 0,
+    clubId: 0,
+    roomCode: "",
+    photonRegion: region,
+    photonRegionId: region,
+    photonRoomId: `uwu-dorm-${id}`,
+    name: `@${c.authUser.Username}'s Dorm`,
+    maxCapacity: 4,
+    isFull: false,
+    isPrivate: true,
+    isInProgress: false,
+    EncryptVoiceChat: false,
+  };
+  presenceById.set(id, roomInstance); // so the heartbeat agrees the player is in this room
+  c.send(200, { result: 0, errorCode: 0, roomInstance, correlationId });
+};
+route("POST", "/matchmake/dorm", dormMatchmake);
+// /matchmake/none — the client posts this at startup and WHILE SITTING IN ORIENTATION when it
+// needs an instance but isn't going anywhere in particular. Per RecFlare it must answer the
+// instance the player is ALREADY in (re-committing presence), never force a destination —
+// forcing the dorm here warps the player out of Orientation and overwrites the -2 seed, which
+// desyncs presence and aborts the room load. Only a caller with NO live presence falls back to
+// their dorm.
+const noneMatchmake = (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const id = selfPlayerId(c);
+  let correlationId = EMPTY_GUID;
+  try {
+    const q = new URLSearchParams(c.body || "");
+    correlationId = q.get("CorrelationId") || q.get("correlationId") || correlationId;
+  } catch { /* non-form body */ }
+  const current = presenceById.get(id);
+  if (current) {
+    c.send(200, { result: 0, errorCode: 0, roomInstance: current, correlationId });
+    return;
+  }
+  dormMatchmake(c); // no live presence -> fall back to the dorm
+};
+route("POST", "/matchmake/none", noneMatchmake);
+// The client reports how its Photon join went; accepted and ignored (empty 200). A 404 here
+// makes matchmaking treat the join as failed and re-matchmake in a loop.
+route("POST", "/roominstance/**/reportjoinresult", (c) => c.empty());
+
+// --- rooms.rec.net: the room object the client loads after matchmake ---
+// GET /dormroom/me — returns the caller's dorm ROOM ID as a BARE NUMBER (RecFlare's
+// `DormRoomId` = Number(dorm.RoomId)), NOT a RoomDto. The client then fetches the full room
+// from GET /rooms/{id}. Returning a RoomDto here makes the client fail to parse a number
+// ("Malformed Response") -> "No such room". Our dorm's roomId == the account id.
+route("GET", "/dormroom/me", (c) => c.send(200, selfPlayerId(c)));
+// GET /rooms?id=&name= — single-room lookup. Returns the RoomDto when found, or `{}` (empty
+// object, NOT a 404) when there's no match — the client reads {} as "no such room, keep going".
+// A 404 here instead aborts the BootSequence with the fatal "No such room". id may be a
+// comma-separated list (first valid integer wins). Every room we know is a dorm.
+route("GET", "/rooms", (c) => {
+  const idParam = c.query.get("id");
+  if (idParam) {
+    const id = Number.parseInt((idParam.split(",")[0] ?? "").trim(), 10);
+    if (!Number.isNaN(id)) {
+      c.send(200, roomDtoFor(id));
+      return;
+    }
+  }
+  // Name lookup (e.g. ?name=SocialOrientation&include=... — the new-user onboarding probe).
+  // RecFlare's LIVE server returns `{}` (empty object) for a name with no matching room, and
+  // the client reads that as "no such named room" and moves on using its local Orientation +
+  // the seeded -2 presence. Returning a real dorm RoomDto here instead gave the client a room
+  // whose RoomId (account id) disagreed with its Orientation presence (roomId 13), so it never
+  // loaded the Orientation scene. Known special room "Orientation" -> room 13 DTO; else `{}`.
+  const nameParam = c.query.get("name");
+  if (nameParam) {
+    const n = nameParam.toLowerCase();
+    if (n === "orientation" || n === "socialorientation") {
+      // New-user onboarding room. MUST be a valid RoomDto (a `{}` here malforms fatally at ~28s).
+      // Serve the Orientation room (13) so it matches the seeded -2 presence.
+      c.send(200, orientationRoomDto());
+      return;
+    }
+    c.send(200, {}); // RecFlare's no-match response for any other unknown named room
+    return;
+  }
+  c.send(200, null); // neither id nor name resolvable
+});
+// GET /rooms/bulk — rooms by id (?id= repeated and/or comma-separated). Returns a RoomDto
+// array (missing ids omitted). MUST be registered before /rooms/** or that catch-all 404s it
+// with "no such room" — which the BootSequence surfaces as the fatal "No such room". Every
+// room we know is a dorm, so return a dorm DTO per requested id.
+route("GET", "/rooms/bulk", (c) => {
+  const ids = [...c.query.getAll("id")]
+    .flatMap((v) => v.split(","))
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => !Number.isNaN(n));
+  c.send(200, ids.map((rid) => roomDtoFor(rid)));
+});
+// GET /rooms/{id} — during "preparing", the client fetches the full Room to build the scene
+// (subrooms, save). We serve the caller's dorm (roomId == their account id, set in matchmake).
+route("GET", "/rooms/**", (c) => {
+  // Only the bare `/rooms/<number>` form is a room fetch; sub-paths (boosts, interactions)
+  // and non-numeric ids (bulk, named/*) stay tolerated 404s.
+  const m = /^\/rooms\/(\d+)$/.exec(c.path);
+  if (!m) return c.send(404, { Code: 404, Error: "no such room" });
+  const id = Number.parseInt(m[1], 10);
+  const u = userById(id);
+  c.send(200, roomDtoFor(id));
 });
 
 // --- notify.rec.net (SignalR hub negotiate; the WS itself is not up yet) ---
@@ -681,7 +1022,9 @@ route("GET", "/playersettings", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []); // no stored settings; client falls back to its own defaults
 });
-route("PUT", "/playersettings", (c) => c.send(200, {}));
+// PUT upserts settings; RecFlare returns the settings ARRAY ([{PlayerId,Key,Value}]), not {}.
+// We don't persist, so echo an empty array (correct type — the client parses a list).
+route("PUT", "/playersettings", (c) => c.send(200, []));
 
 // --- platformnotifications.rec.net ---
 route("GET", "/crm/me/config/v3", (c) => {
@@ -821,12 +1164,31 @@ const reputationBulk = (c: Ctx) =>
 route("GET", "/api/playerReputation/v2/bulk", reputationBulk);
 route("POST", "/api/playerReputation/v2/bulk", reputationBulk);
 
-// outfits/me: empty brand-new-account envelope (flat shape) when nothing saved.
+// outfits/me: the stored worn outfit in the NEWER envelope (StoredOutfit), with a
+// populated `LegacyData` object. The client's OutfitManager.GetAndApplyUnknownAvatarItems
+// reads outfit.LegacyData and throws "Expected LegacyData but was null" if it's absent —
+// which is why the old flat EmptyOutfit shape ({OutfitSelections,FaceFeatures,...}) failed.
+// Shape per recflare/server apps/api/src/openapi.ts (StoredOutfit). LegacyData.SelectionsV1
+// is the semicolon-delimited legacy descriptor string (our flat OutfitSelections).
+const storedOutfit = () => ({
+  LegacyData: {
+    SelectionsV1: (defaultAvatar as Record<string, unknown>).OutfitSelections ?? "",
+    SelectionsV2: null,
+    FaceFeatures: (defaultAvatar as Record<string, unknown>).FaceFeatures ?? "",
+    SkinColor: (defaultAvatar as Record<string, unknown>).SkinColor ?? "",
+    HairColor: (defaultAvatar as Record<string, unknown>).HairColor ?? "",
+  },
+  Selections: [],
+  DataVersion: 2,
+  CustomizationSettings: null,
+  ThumbnailFileName: null,
+  Name: null,
+  Accessibility: 0,
+  Slot: 0,
+});
 route("GET", "/outfits/me", (c) => {
   if (!c.authUser) return c.send(401, {});
-  // DIAGNOSTIC: empty brand-new-account envelope (no worn items) — tests whether
-  // the avatar builds without worn-item resolution.
-  c.send(200, { FaceFeatures: "", HairColor: "", OutfitSelections: "", SkinColor: "" });
+  c.send(200, storedOutfit());
 });
 
 // moderation: "not blocked" / "not a referee".
@@ -852,6 +1214,127 @@ route("GET", "/api/PlayerReporting/v1/moderationBlockDetails", (c) => c.send(200
 route("POST", "/api/PlayerReporting/v1/moderationBlockDetails", (c) => c.send(200, NOT_BLOCKED));
 route("GET", "/api/PlayerReporting/v1/referee", (c) => c.send(200, false));
 route("POST", "/api/PlayerReporting/v1/referee", (c) => c.send(200, false));
+// PlayerReporting /hile — RecFlare's live server returns a bare `false`. Must be 200: a 404
+// here throws during room-load and quits the app (see AI block below).
+route("POST", "/api/PlayerReporting/v1/hile", (c) => c.send(200, false));
+
+// --- 2025 AI features (ai.rec.net / lists.rec.net) ---
+// The client checks AI access/budget during boot AND during room load
+// (GET /gameai/user/access?roomId=13 fires while loading Orientation). RecFlare serves all of
+// these as 200s; a 404 throws an unobserved HTTP exception that, inside the room-load critical
+// section (OperationContext.PauseNetworking "InitialLoad"), escalates to AppExitState
+// Running=>PreparingToExit — the client quit mid-Orientation-load. Shapes are verbatim from
+// recflare/server apps/ai/src/ai.app.ts + apps/lists/src/lists.app.ts. No AI backend exists;
+// Game AI is refused with a 200 (success:false), Roomie/Maker report budget so the client does
+// not take a hard-failure path.
+const GAME_AI_UNSUPPORTED = {
+  success: false,
+  error_id: "AI.RoomDoesNotSupportGameAI",
+  error: "This room does not support Rec Room Game AI",
+};
+const INT32_MAX = 2147483647;
+route("GET", "/gameai/user/access", (c) => c.send(200, GAME_AI_UNSUPPORTED));
+route("GET", "/gameai/room/{roomId}/spendsummary", (c) => c.send(200, { ...GAME_AI_UNSUPPORTED, value: null }));
+// Roomie AI access — our build (20250718.01, not 20260323) takes the "granted, max energy"
+// branch so the client's no-credit path is never entered.
+route("GET", "/roomieai/user/access", (c) =>
+  c.send(200, {
+    success: true,
+    error_id: null,
+    error: null,
+    value: {
+      MaxEnergyFromSubscriptions: INT32_MAX,
+      EnergyLeft: INT32_MAX,
+      NextSubscriptionEnergyRechargeAt: null,
+      OutputAudioEnabled: true,
+    },
+  }));
+route("GET", "/roomieai/user/facts", (c) => c.send(200, { UserContext: "", UserFacts: [] }));
+route("POST", "/roomieai/realtime-session/create", (c) =>
+  c.send(200, { success: false, error_id: "", error: "AI conversation is unavailable.", value: null }));
+route("GET", "/makerai/user/access", (c) => c.send(200, { Success: true, Error: null, error_id: null }));
+route("GET", "/makerai/user/balances", (c) =>
+  c.send(200, {
+    UsageDollars: 0,
+    UsersMaxUsageDollars: 0,
+    RRPlusUsageDollars: 0,
+    UsersMaxRRPlusUsageDollars: 0,
+    TimeBalanceStatus: "Empty",
+    TimeExpiresAt: "0001-01-01T00:00:00",
+    UsageBalanceStatus: "Good",
+    UsagePercent: 0,
+    RRPlusUsageBalanceStatus: "Good",
+    RRPlusUsagePercent: 0,
+  }));
+// contextualfeatures (lists.rec.net) — bare ack; client POSTs its context, reads back only
+// whether the post was accepted.
+route("POST", "/contextualfeatures", (c) => c.send(200, { success: true, error_id: null, error: null }));
+
+// --- 2025 room economy (econ.rec.net) ---
+// The player SPAWN reads room economy data. RecFlare serves these as 200s; a 404 makes
+// RecRoom.Systems.Economy.RoomKeys.RoomKeysManager THROW, which RoomLoad reports as
+// FailedToSpawnPlayer (Code 8700) — the player never enters and the client loops
+// Orientation<->Dorm. Shapes from recflare/server apps/econ/src/econ.app.ts: an empty room is
+// empty collections. (Serving these is what let us get past the room-load exit wall.)
+route("GET", "/api/roomkeys/v1/room", (c) => c.send(200, []));
+route("GET", "/api/roomcurrencies/v1/currencies", (c) => c.send(200, []));
+route("GET", "/api/roomconsumables/v1/roomConsumable/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/api/ugcPurchasables/v1/items/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/econ/roomInventory/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/econ/roomInventory/room/{roomId}/player", (c) => c.send(200, []));
+route("GET", "/econ/roomInventoryItemTags/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/econ/roomOffer/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/econ/roomOffer/room/{roomId}/purchaseCounts", (c) =>
+  c.send(200, { Value: [], Success: true, Error: null, error_id: null }));
+route("GET", "/econ/roomGiftDropShops/room/{roomId}", (c) => c.send(200, []));
+route("GET", "/econ/roomEconConfig/{roomId}", (c) => {
+  const m = /\/roomEconConfig\/(\d+)/.exec(c.path);
+  c.send(200, { RoomId: m ? Number(m[1]) : 0, EnableSortingTabs: false });
+});
+// CampusCard (RR+ subscription) — a non-subscriber gets an empty object.
+route("GET", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
+
+// --- boot/PLAY peripherals (shapes from recflare/server apps/api openapi.ts) ---
+// QuickPlay: a pending quick-play action; all-null = none pending. Checked on PLAY.
+route("GET", "/api/quickPlay/v1/getandclear", (c) =>
+  c.send(200, { RoomName: null, ActionCode: null, TargetPlayerId: null }));
+// Crash-reporter config (Backtrace). Sensible defaults; keeps boot from 404ing here.
+route("GET", "/api/config/v1/backtrace", (c) =>
+  c.send(200, {
+    ReportBudget: 0,
+    FilterType: 0,
+    SampleRate: 0,
+    LogLineCount: 0,
+    CaptureNativeCrashes: 0,
+    ANRThresholdMs: 0,
+    MessageCount: 0,
+    MessageRegex: "",
+    VersionRegex: "",
+  }));
+// Messages inbox — empty for a fresh account.
+route("GET", "/api/messages/v2/get", (c) => c.send(200, []));
+// Relationships (friends/blocks/etc.) — none for a fresh account.
+route("GET", "/api/relationships/v2/get", (c) => c.send(200, []));
+// Chat threads — none yet.
+route("GET", "/thread", (c) => c.send(200, []));
+route("GET", "/thread/party", (c) => c.send(200, []));
+// Cached-login batch (plural) — like the singular, nothing linked -> empty list.
+route("POST", "/cachedlogin/forplatformids", (c) => c.send(200, []));
+// Store catalog (commerce) — empty = no SKUs for sale (store is empty but valid).
+route("GET", "/api/catalog/v1/all", (c) => c.send(200, []));
+route("GET", "/purchase/v1/cleanuppending", (c) => c.send(200, []));
+route("POST", "/purchase/v1/cleanuppending", (c) => c.send(200, []));
+// Clubs (subscriptions/announcements) — none for a fresh account.
+route("GET", "/club/mine/member", (c) => c.send(200, []));
+route("GET", "/announcements/v2/mine/unread", (c) => c.send(200, []));
+route("GET", "/announcements/v2/subscription/mine/unread", (c) => c.send(200, []));
+// Statsig experiments flag — enabled true (matches reference's success bool).
+route("POST", "/statsigUserProperties", (c) => c.send(200, { success: true }));
+route("GET", "/statsigUserProperties", (c) => c.send(200, { success: true }));
+// Referee (anti-cheat) files manifest — none to fetch.
+route("GET", "/api/referee/files", (c) => c.send(200, []));
+// Data-collection sampling config — RecFlare returns an ARRAY ([]), not {} (which malforms).
+route("GET", "/sampling", (c) => c.send(200, []));
 
 // OAuth token endpoint (IdentityServer-style: /Auth/connect/token)
 route("POST", "/Auth/connect/token", async (c) => {
@@ -1014,14 +1497,24 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     authUser: authTok ? userById(Number(authTok.userId)) : null,
     send: (status, obj) => {
       const bodyStr = JSON.stringify(obj);
-      // DEBUG: log avatar/outfit/econ response bodies to pinpoint the avatar parse.
-      if (/avatar|outfit|econ|customAvatarItems/i.test(p)) {
-        log({ event: "response", path: p, status, body: bodyStr.slice(0, 600) });
-      }
+      const buf = Buffer.from(bodyStr, "utf8");
+      // DEBUG: log ALL response bodies (temporary) to trace the room-load "No such room".
+      log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status, body: bodyStr.slice(0, 300) });
       res.setHeader("content-type", "application/json; charset=utf-8");
+      // Explicit byte-accurate Content-Length (non-chunked): BestHTTP over our hand-rolled
+      // TLS/keep-alive edge mis-reassembled larger chunked bodies (e.g. the ~1.9KB dorm
+      // RoomDto) into a "Malformed Response". A fixed length delimits the body cleanly.
+      res.setHeader("content-length", String(buf.length));
       res.setHeader("x-uwunet", "uwunet");
       res.writeHead(status);
-      res.end(bodyStr);
+      res.end(buf);
+    },
+    empty: () => {
+      log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status: 200, body: "<empty>" });
+      res.setHeader("content-length", "0");
+      res.setHeader("x-uwunet", "uwunet");
+      res.writeHead(200);
+      res.end();
     },
   };
 
@@ -1063,12 +1556,15 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
               : asJson && existsSync(asJson) ? asJson
               : "";
     if (hit) {
-      res.setHeader(
-        "content-type",
-        hit.endsWith(".json")
-          ? "application/json; charset=utf-8"
-          : "application/octet-stream",
-      );
+      const ext = hit.slice(hit.lastIndexOf(".")).toLowerCase();
+      const ctype =
+        ext === ".json" ? "application/json; charset=utf-8"
+        : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
+        : ext === ".png" ? "image/png"
+        : ext === ".webp" ? "image/webp"
+        : ext === ".gif" ? "image/gif"
+        : "application/octet-stream";
+      res.setHeader("content-type", ctype);
       res.setHeader("x-uwunet", "fixture");
       res.writeHead(200);
       res.end(req.method === "HEAD" ? undefined : readFileSync(hit));
@@ -1095,8 +1591,96 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
   });
 }
 
+// ---- minimal WebSocket server (RFC 6455) for the SignalR notify hub ----
+// The client opens a SignalR Core WebSocket to notify.rec.net/hub/v1 during Auto
+// Login; if that transport errors, the whole login fails ("Unable to login (code:
+// note)" — the failure propagates through BestHTTP.SignalRCore.HubConnection). We
+// complete the WS upgrade and the SignalR JSON handshake so the hub connects; we
+// don't push real notifications — a connected, quiet hub is enough to log in.
+const WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const RS = "\x1e"; // SignalR record separator
+
+const wsAccept = (key: string): string =>
+  crypto.createHash("sha1").update(key + WS_MAGIC).digest("base64");
+
+const wsFrame = (payload: string | Buffer, opcode = 0x1): Buffer => {
+  const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+  const len = data.length;
+  let header: Buffer;
+  if (len < 126) {
+    header = Buffer.from([0x80 | opcode, len]);
+  } else if (len < 65536) {
+    header = Buffer.from([0x80 | opcode, 126, (len >> 8) & 0xff, len & 0xff]);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  return Buffer.concat([header, data]);
+};
+
+// deno-lint-ignore no-explicit-any
+const handleWsUpgrade = (req: http.IncomingMessage, socket: any, _head: Buffer) => {
+  const key = req.headers["sec-websocket-key"];
+  const url = req.url ?? "";
+  if (typeof key !== "string" || !/\/hub\//.test(url)) {
+    try { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.end(); } catch { /* */ }
+    return;
+  }
+  log({ event: "ws-open", host: req.headers.host, path: url });
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${wsAccept(key)}\r\n\r\n`,
+  );
+
+  let buf = Buffer.alloc(0);
+  let handshaken = false;
+  socket.on("data", (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 2) {
+      const b1 = buf[1];
+      const opcode = buf[0] & 0x0f;
+      const masked = (b1 & 0x80) !== 0;
+      let len = b1 & 0x7f;
+      let off = 2;
+      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
+      else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); off = 10; }
+      const maskLen = masked ? 4 : 0;
+      if (buf.length < off + maskLen + len) return; // wait for the rest of the frame
+      let payload = buf.subarray(off + maskLen, off + maskLen + len);
+      if (masked) {
+        const mask = buf.subarray(off, off + 4);
+        const out = Buffer.alloc(len);
+        for (let i = 0; i < len; i++) out[i] = payload[i] ^ mask[i & 3];
+        payload = out;
+      }
+      buf = buf.subarray(off + maskLen + len);
+
+      if (opcode === 0x8) { try { socket.end(); } catch { /* */ } return; } // close
+      if (opcode === 0x9) { socket.write(wsFrame(payload, 0xa)); continue; } // ping -> pong
+      if (opcode === 0xa) continue; // pong
+      if (opcode !== 0x1 && opcode !== 0x2) continue;
+      const text = payload.toString("utf8");
+      if (!handshaken) {
+        // First text message is the SignalR handshake request
+        // ({"protocol":"json","version":1}\x1e); reply {}\x1e for success.
+        handshaken = true;
+        socket.write(wsFrame("{}" + RS));
+        continue;
+      }
+      // Keep-alive: SignalR ping {"type":6}; answer with a ping, ignore the rest.
+      if (text.includes('"type":6')) socket.write(wsFrame('{"type":6}' + RS));
+    }
+  });
+  socket.on("error", () => { try { socket.destroy(); } catch { /* */ } });
+};
+
 // ---- servers ----
 const httpServer = http.createServer((req, res) => dispatch(req, res, false));
+httpServer.on("upgrade", handleWsUpgrade);
 httpServer.listen(HTTP_PORT, "0.0.0.0", () =>
   console.log(`[uwunet] plain HTTP on :${HTTP_PORT}`),
 );
@@ -1133,6 +1717,7 @@ const tlsServer = tls.createServer(
     const s = new http.Server(function (req, res) {
       void dispatch(req, res, true);
     });
+    s.on("upgrade", handleWsUpgrade);
     s.emit("connection", plain);
   },
 );
