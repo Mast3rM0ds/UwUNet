@@ -107,6 +107,19 @@ const TOKEN_SCOPES = [
 const TOKEN_SCOPE_STR =
   "offline_access profile rn rn.accounts rn.accounts.gc rn.api rn.chat rn.clubs rn.commerce rn.match.read rn.match.write rn.notify rn.rooms rn.storage";
 const BASE_ROLES = ["gameClient"];
+// "God" accounts: full staff powers — developer + moderator + screenshare roles (in the token
+// and answered by the /role/* lookups the client gates its dev UI on), maker pen and every
+// build permission in every room, and Rec Room Plus. Configured via UWU_GOD_IDS (comma-
+// separated account ids); defaults to 1000000, the owner's account. These are the operator's
+// own accounts, so the grant is deliberate.
+const godIds = new Set<number>(
+  (process.env.UWU_GOD_IDS ?? "1000000")
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n)),
+);
+const GOD_ROLES = ["developer", "moderator", "screenshare"];
+const isGod = (id: number | string) => godIds.has(Number(id));
 const b64urlJson = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 function signJwt(claims: Record<string, unknown>): string {
   const data = `${b64urlJson({ alg: "HS256", typ: "JWT" })}.${b64urlJson(claims)}`;
@@ -131,7 +144,8 @@ function mintAccessToken(u: User, ver: string): string {
     platform_id: u.PlatformId ?? "",
     "rn.ver": ver,
     "rn.plat": plat,
-    role: [...BASE_ROLES],
+    "rn.plus": isGod(u.Id),
+    role: isGod(u.Id) ? [...BASE_ROLES, ...GOD_ROLES] : [...BASE_ROLES],
     scope: TOKEN_SCOPES,
     jti: crypto.randomUUID(),
   });
@@ -1138,6 +1152,16 @@ const photonAccessTokenDto = (roomInstanceId: number | null, role: number) => {
   }
   return { Permissions: permissions, PhotonAccessToken: "", RoomInstanceId: roomInstanceId };
 };
+// A god account: every build permission True at every role tier, so whatever role the client
+// thinks it holds in whatever room, it reads True — maker pen, reset, delete-all, invention
+// save/spawn and play-gizmos, everywhere.
+const godPhotonAccessTokenDto = (roomInstanceId: number | null) => {
+  const permissions = [];
+  for (const at of PERMISSION_ROLES)
+    for (const name of BUILD_PERMISSIONS)
+      permissions.push({ Override: true, Permission: name, Role: at, Type: 0, Value: "True" });
+  return { Permissions: permissions, PhotonAccessToken: "", RoomInstanceId: roomInstanceId };
+};
 route("GET", "/photon_access_token", (c) => {
   if (!c.authUser) return c.send(401, {});
   const id = selfPlayerId(c);
@@ -1145,6 +1169,7 @@ route("GET", "/photon_access_token", (c) => {
   const roomInstanceId =
     presence && typeof presence.roomInstanceId === "number" ? (presence.roomInstanceId as number) : null;
   const roomId = presence && typeof presence.roomId === "number" ? (presence.roomId as number) : null;
+  if (isGod(id)) return c.send(200, godPhotonAccessTokenDto(roomInstanceId)); // build anything, anywhere
   // The caller owns their own dorm (roomId === their account id) → Creator; otherwise a visitor.
   const role = roomId === id ? ROLE_CREATOR : ROLE_NONE;
   c.send(200, photonAccessTokenDto(roomInstanceId, role));
@@ -2197,6 +2222,32 @@ route("POST", "/uwunet/claim", async (c) => {
   log({ event: "account-claimed", id: u.Id, username });
   c.send(200, { ok: true, accountId: u.Id, username });
 });
+
+// Role lookups the client uses to unlock staff/dev UI (RecFlare auth `/role/*`). Single form
+// `/role/{role}/{id}` -> a BARE JSON boolean (or an empty 404 for an account we don't have);
+// bulk form `/role/{role}?id=1&id=2` -> the subset of those ids that hold the role. God
+// accounts hold developer, moderator and screenshare; everyone else holds none.
+const role404 = (c: Ctx) => {
+  c.res.setHeader("content-length", "0");
+  c.res.writeHead(404);
+  c.res.end();
+};
+const roleSingle = (role: string) => (c: Ctx) => {
+  const m = new RegExp(`/role/${role}/(\\d+)$`).exec(c.path);
+  if (!m) return role404(c);
+  const id = Number.parseInt(m[1], 10);
+  if (!userById(id)) return role404(c); // no such account -> 404, like the reference
+  c.send(200, isGod(id)); // bare boolean
+};
+const roleBulk = (c: Ctx) => {
+  const ids = [...new Set(c.query.getAll("id").map((v) => Number.parseInt(v, 10)).filter(Number.isInteger))];
+  c.send(200, ids.filter((id) => isGod(id)));
+};
+for (const role of GOD_ROLES) {
+  route("GET", `/role/${role}/{id}`, roleSingle(role));
+  route("GET", `/role/${role}`, roleBulk);
+}
+
 async function signup(c: Ctx) {
   const b = await parseBodyJson(c);
   const username = String(b.username ?? b.Username ?? "").trim();
