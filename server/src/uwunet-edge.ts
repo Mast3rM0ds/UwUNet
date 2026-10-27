@@ -120,6 +120,19 @@ const godIds = new Set<number>(
 );
 const GOD_ROLES = ["developer", "moderator", "screenshare"];
 const isGod = (id: number | string) => godIds.has(Number(id));
+// Staff roles (developer/moderator/screenshare) are SEPARATE from the maker-pen grant and OFF
+// by default. They ride in the access token and the /role lookups the client gates its dev/mod
+// UI on — but a client that believes it is staff calls dev/mod endpoints during CONNECTION that
+// this edge does not fully serve yet, which fails login ("failed to connect to RecNet"). So
+// staff is opt-in via UWU_STAFF_IDS, to be enabled only once verified not to break the boot.
+// Maker-pen-everywhere (isGod) is safe on its own (it is read at room load) and stays on.
+const staffIds = new Set<number>(
+  (process.env.UWU_STAFF_IDS ?? "")
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n)),
+);
+const isStaff = (id: number | string) => staffIds.has(Number(id));
 const b64urlJson = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 function signJwt(claims: Record<string, unknown>): string {
   const data = `${b64urlJson({ alg: "HS256", typ: "JWT" })}.${b64urlJson(claims)}`;
@@ -129,7 +142,7 @@ function signJwt(claims: Record<string, unknown>): string {
 function mintAccessToken(u: User, ver: string): string {
   const now = Math.floor(Date.now() / 1000);
   const plat = Number(u.PlatformType ?? 0);
-  return signJwt({
+  const claims: Record<string, unknown> = {
     iss: "https://auth.rec.net",
     aud: "https://auth.rec.net",
     nbf: now,
@@ -144,11 +157,14 @@ function mintAccessToken(u: User, ver: string): string {
     platform_id: u.PlatformId ?? "",
     "rn.ver": ver,
     "rn.plat": plat,
-    "rn.plus": isGod(u.Id),
-    role: isGod(u.Id) ? [...BASE_ROLES, ...GOD_ROLES] : [...BASE_ROLES],
+    role: isStaff(u.Id) ? [...BASE_ROLES, ...GOD_ROLES] : [...BASE_ROLES],
     scope: TOKEN_SCOPES,
     jti: crypto.randomUUID(),
-  });
+  };
+  // rn.plus is only added for staff accounts: a non-staff token stays byte-for-byte the known-
+  // good shape (no rn.plus key at all), which is what the client booted fine with before.
+  if (isStaff(u.Id)) claims["rn.plus"] = true;
+  return signJwt(claims);
 }
 
 type Token = { kind: string; exp: number; userId: string };
@@ -2237,11 +2253,11 @@ const roleSingle = (role: string) => (c: Ctx) => {
   if (!m) return role404(c);
   const id = Number.parseInt(m[1], 10);
   if (!userById(id)) return role404(c); // no such account -> 404, like the reference
-  c.send(200, isGod(id)); // bare boolean
+  c.send(200, isStaff(id)); // bare boolean; true only for opt-in staff accounts
 };
 const roleBulk = (c: Ctx) => {
   const ids = [...new Set(c.query.getAll("id").map((v) => Number.parseInt(v, 10)).filter(Number.isInteger))];
-  c.send(200, ids.filter((id) => isGod(id)));
+  c.send(200, ids.filter((id) => isStaff(id)));
 };
 for (const role of GOD_ROLES) {
   route("GET", `/role/${role}/{id}`, roleSingle(role));
