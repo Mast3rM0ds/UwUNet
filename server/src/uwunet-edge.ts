@@ -422,6 +422,39 @@ const templateSubRoom = (Array.isArray(roomTemplate.SubRooms) && roomTemplate.Su
 // the dorm template had IsSandbox:true on its subroom (orientation's is false), which makes the
 // client load the maker-pen/circuit/save path and `.First()` an empty save/circuit collection.
 const orientationRoomStatic = readStatic("orientation-room.json", {}) as Record<string, unknown>;
+
+// Rec Room first-party rooms (RROs) + the Rec Center: metadata only (room id, name, the baked
+// Unity scene GUID, capacity) from RecFlare's public room data — no copyrighted room build.
+// The interactive save layer is nulled: the client loads the baked scene it already ships, so
+// 24 of the 27 RROs (which have no save on RecFlare either) play exactly as Rec Room did.
+// Serving these lets the client resolve, list and matchmake into every RRO and the Rec Center.
+const rroData = readStatic("rro-rooms.json", { rooms: {}, byName: {} }) as {
+  rooms: Record<string, Record<string, unknown>>;
+  byName: Record<string, number>;
+};
+const rroRoomById = (id: number): Record<string, unknown> | undefined => rroData.rooms[String(id)];
+const rroRoomIdByName = (name: string): number | undefined => rroData.byName[name.toLowerCase()];
+// An RRO's first subroom, as matchmaking needs it (scene = the baked UnitySceneId).
+const rroSubRoom = (
+  id: number,
+): { subRoomId: number; scene: string; name: string; maxCapacity: number } | undefined => {
+  const dto = rroRoomById(id);
+  if (!dto) return undefined;
+  const sr = ((Array.isArray(dto.SubRooms) ? (dto.SubRooms as Record<string, unknown>[])[0] : undefined) ??
+    {}) as Record<string, unknown>;
+  return {
+    subRoomId: typeof sr.SubRoomId === "number" ? (sr.SubRoomId as number) : 1,
+    scene: typeof sr.UnitySceneId === "string" ? (sr.UnitySceneId as string) : "",
+    name: typeof dto.Name === "string" ? (dto.Name as string) : `Room${id}`,
+    maxCapacity: typeof sr.MaxPlayers === "number" ? (sr.MaxPlayers as number) : 16,
+  };
+};
+// The RRO DTOs as a browse list — every first-party room except the Orientation tutorial
+// (room 13 is new-user-only, not a place you browse to). Used by the hot feed and search.
+const rroDtoList = (): Record<string, unknown>[] =>
+  Object.entries(rroData.rooms)
+    .filter(([id]) => Number(id) !== 13)
+    .map(([, dto]) => dto);
 const dormRoomDto = (id: number, username: string) => ({
   ...roomTemplate,
   RoomId: id,
@@ -741,9 +774,12 @@ const ORIENTATION_SCENE = "c79709d8-a31b-48aa-9eb8-cc31ba9505e8"; // room 13 Sub
 // here is "Malformed Response: '{}'" (fatal ~28s); the caller's dorm RoomDto gave a RoomId that
 // disagreed with the -2 presence and stalled the scene load.
 const orientationRoomDto = () => orientationRoomStatic;
-// Room-by-id lookup: Orientation (13) -> the Orientation DTO; everything else is a dorm.
+// Room-by-id lookup: Orientation (13) -> the tuned Orientation DTO; any other RRO / the Rec
+// Center -> its real DTO; everything else is a player dorm.
 const roomDtoFor = (id: number) =>
-  id === ORIENTATION_ROOM_ID ? orientationRoomDto() : dormRoomDto(id, userById(id)?.Username ?? `Player${id}`);
+  id === ORIENTATION_ROOM_ID
+    ? orientationRoomDto()
+    : rroRoomById(id) ?? dormRoomDto(id, userById(id)?.Username ?? `Player${id}`);
 const orientationRoomInstance = () => {
   let region = "usw";
   try {
@@ -989,6 +1025,96 @@ route("POST", "/matchmake/none", noneMatchmake);
 // makes matchmaking treat the join as failed and re-matchmake in a loop.
 route("POST", "/roominstance/**/reportjoinresult", (c) => c.empty());
 
+// --- public room matchmaking (RROs + the Rec Center) --------------------------------------
+// Send the caller into a SHARED instance of a first-party room. Everyone who matchmakes into
+// the same room+subroom gets the same deterministic photonRoomId, so they land in the same
+// Photon room and see each other — that's how the Rec Center fills up. roomInstanceId is
+// stable per room and differs from the caller's dorm instance (their account id), which is
+// what the client keys a room transition off.
+const PUBLIC_INSTANCE_BASE = 500000;
+const publicRoomInstance = (roomId: number, subRoomId?: number) => {
+  const sr = rroSubRoom(roomId);
+  const sub = subRoomId ?? sr?.subRoomId ?? 1;
+  const region = photonRegion();
+  return {
+    roomInstanceId: PUBLIC_INSTANCE_BASE + roomId,
+    roomId,
+    subRoomId: sub,
+    roomInstanceType: 0, // Public
+    location: sr?.scene ?? "",
+    dataBlob: "",
+    eventId: 0,
+    clubId: 0,
+    roomCode: "",
+    photonRegion: region,
+    photonRegionId: region,
+    photonRoomId: `uwu-room-${roomId}-${sub}`,
+    name: sr?.name ?? `Room${roomId}`,
+    maxCapacity: sr?.maxCapacity ?? 16,
+    isFull: false,
+    isPrivate: false,
+    isInProgress: false,
+    EncryptVoiceChat: false,
+  };
+};
+// The newer client reads the PascalCase envelope on /matchmake/v2/ and /matchmake/invite/; the
+// legacy routes (and our working /matchmake/dorm) read the lowercase one. Same instance, two
+// spellings — pick by the request path, like RecFlare's matchmakeResult.
+const isPascalMatchmake = (p: string) => p.startsWith("/matchmake/v2/") || p.startsWith("/matchmake/invite/");
+const toV2RoomInstance = (ri: Record<string, unknown>) => ({
+  RoomInstanceId: ri.roomInstanceId, RoomId: ri.roomId, SubRoomId: ri.subRoomId, Location: ri.location,
+  EventId: ri.eventId, ClubId: ri.clubId, RoomCode: ri.roomCode, Name: ri.name, MaxCapacity: ri.maxCapacity,
+  IsFull: ri.isFull, IsPrivate: ri.isPrivate, IsInProgress: ri.isInProgress, EncryptVoiceChat: ri.EncryptVoiceChat,
+  RoomInstanceType: ri.roomInstanceType, MatchmakingPolicy: 0,
+  // RecFlare's v2 instance omits the Photon fields; the client tolerates extras and needs these
+  // to connect, so include them.
+  PhotonRegion: ri.photonRegion, PhotonRegionId: ri.photonRegionId, PhotonRoomId: ri.photonRoomId, DataBlob: ri.dataBlob,
+});
+const matchmakeCorrelationId = (c: Ctx) => {
+  let cid = EMPTY_GUID;
+  try { cid = new URLSearchParams(c.body || "").get("CorrelationId") || new URLSearchParams(c.body || "").get("correlationId") || cid; } catch {}
+  if (cid === EMPTY_GUID && c.body) { try { const j = JSON.parse(c.body); cid = j.CorrelationId || j.correlationId || cid; } catch {} }
+  return cid;
+};
+const sendMatchmake = (c: Ctx, errorCode: number, roomInstance: Record<string, unknown> | null) => {
+  const correlationId = matchmakeCorrelationId(c);
+  if (isPascalMatchmake(c.path)) {
+    c.send(200, { ErrorCode: errorCode, CorrelationId: correlationId, RoomInstance: roomInstance ? toV2RoomInstance(roomInstance) : null });
+  } else {
+    c.send(200, { errorCode, result: errorCode, roomInstance, correlationId });
+  }
+};
+// POST /matchmake/room/{roomId}[/{subRoomId}] (+ the v2 spelling): enter an RRO / the Rec Center.
+const roomMatchmake = (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const m = /\/room\/(\d+)(?:\/(\d+))?$/.exec(c.path);
+  if (!m) return sendMatchmake(c, 2, null); // 2 = couldn't resolve
+  const roomId = Number.parseInt(m[1], 10);
+  const subRoomId = m[2] ? Number.parseInt(m[2], 10) : undefined;
+  if (!rroRoomById(roomId)) return sendMatchmake(c, 2, null); // not a room we serve
+  const inst = publicRoomInstance(roomId, subRoomId);
+  presenceById.set(selfPlayerId(c), inst); // the heartbeat now agrees the player is here
+  sendMatchmake(c, 0, inst);
+};
+route("POST", "/matchmake/room/{roomId}", roomMatchmake);
+route("POST", "/matchmake/room/{roomId}/{subRoomId}", roomMatchmake);
+route("POST", "/matchmake/v2/room/{roomId}", roomMatchmake);
+route("POST", "/matchmake/v2/room/{roomId}/{subRoomId}", roomMatchmake);
+
+// POST /matchmake/(v2/)player/{playerId}: follow a friend — return the instance their presence
+// names, so you land in their Photon room. This is how you join your friend wherever they are.
+const playerMatchmake = (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  const m = /\/player\/(\d+)$/.exec(c.path);
+  if (!m) return sendMatchmake(c, 2, null);
+  const inst = presenceById.get(Number.parseInt(m[1], 10)) as Record<string, unknown> | undefined;
+  if (!inst || inst.roomInstanceId === -2) return sendMatchmake(c, 20, null); // 20 = target not joinable (offline Orientation)
+  presenceById.set(selfPlayerId(c), inst);
+  sendMatchmake(c, 0, inst);
+};
+route("POST", "/matchmake/player/{playerId}", playerMatchmake);
+route("POST", "/matchmake/v2/player/{playerId}", playerMatchmake);
+
 // GET /photon_access_token — the permission table + Photon credentials the client needs to
 // SPAWN into a room (RecFlare apps/rooms/src/rooms.app.ts). 404ing this was the dorm's
 // `FailedToSpawnPlayer (Code 8700)`: the client awaits it inside JoinRoomLoadWithPhoton, and a
@@ -1065,6 +1191,12 @@ route("GET", "/rooms", (c) => {
       // New-user onboarding room. MUST be a valid RoomDto (a `{}` here malforms fatally at ~28s).
       // Serve the Orientation room (13) so it matches the seeded -2 presence.
       c.send(200, orientationRoomDto());
+      return;
+    }
+    const rroId = rroRoomIdByName(n);
+    if (rroId !== undefined) {
+      // An RRO / the Rec Center resolved by name (e.g. ?name=RecCenter) -> its real DTO.
+      c.send(200, roomDtoFor(rroId));
       return;
     }
     c.send(200, {}); // RecFlare's no-match response for any other unknown named room
@@ -1503,8 +1635,24 @@ route("GET", "/rooms/hot", (c) => {
   const skip = Number.parseInt(c.query.get("skip") ?? "0", 10) || 0; // mirrored; nothing to page
   const take = Number.parseInt(c.query.get("take") ?? "100", 10) || 100;
   log({ event: "rooms-hot", tag, skip, take });
-  c.send(200, { Results: [], TotalResults: 0 });
+  // The RROs + Rec Center are our "hot" rooms, paged. This is how they show up in the room
+  // browser so the player can tap in (matchmake into them via /matchmake/room/{id}).
+  const all = rroDtoList();
+  c.send(200, { Results: all.slice(skip, skip + take), TotalResults: all.length });
 });
+
+// GET /rooms/search/name + /rooms/search — name search over the RROs (+ the Rec Center), so a
+// player can find a first-party room by name and tap in. Paged shape like /rooms/hot.
+const rroSearch = (c: Ctx) => {
+  const q = (c.query.get("query") ?? c.query.get("name") ?? "").toLowerCase();
+  const take = Number.parseInt(c.query.get("take") ?? "50", 10) || 50;
+  const all = rroDtoList().filter(
+    (d) => !q || String((d as Record<string, unknown>).Name ?? "").toLowerCase().includes(q),
+  );
+  c.send(200, { Results: all.slice(0, take), TotalResults: all.length });
+};
+route("GET", "/rooms/search/name", rroSearch);
+route("GET", "/rooms/search", rroSearch);
 
 // GET /rooms/featuredrooms/current — a single always-active featured group. Auth-gated
 // (the build is read off the token, so no token is a 401: {error:"Unauthorized"} per the
