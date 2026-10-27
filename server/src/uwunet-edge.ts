@@ -1080,6 +1080,53 @@ route("GET", "/rooms/bulk", (c) => {
     .filter((n) => !Number.isNaN(n));
   c.send(200, ids.map((rid) => roomDtoFor(rid)));
 });
+// Per-room, per-player saved data (the blob @'YourRoom' machines store). GET must NEVER 404:
+// RecFlare's own docs — "A player who has never saved any — or an unknown room — gets an EMPTY
+// `Data`... a 404 here would stall the room load." We used to fall through to the /rooms/**
+// catch-all's 404 for this path, which stalled the dorm's spawn chain after login.
+const roomPlayerData = new Map<string, string>(); // `${roomId}:${accountId}` -> base64 blob
+const playerDataKey = (roomId: number, accountId: number) => `${roomId}:${accountId}`;
+route("GET", "/rooms/{roomId}/playerdata/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const m = /^\/rooms\/(\d+)\/playerdata\/me$/.exec(c.path);
+  if (!m) return c.send(404, {});
+  const roomId = Number.parseInt(m[1], 10);
+  c.send(200, { Data: roomPlayerData.get(playerDataKey(roomId, selfPlayerId(c))) ?? "" });
+});
+// Save the caller's per-room player data (form field `data`, base64 the client builds; the
+// server never decodes it). Answer the same bare `{ Data }` with what was stored.
+route("PUT", "/rooms/{roomId}/playerdata/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const m = /^\/rooms\/(\d+)\/playerdata\/me$/.exec(c.path);
+  if (!m) return c.send(404, {});
+  const roomId = Number.parseInt(m[1], 10);
+  let data = "";
+  try {
+    data = new URLSearchParams(c.body).get("data") ?? "";
+  } catch { /* unparseable — store empty */ }
+  roomPlayerData.set(playerDataKey(roomId, selfPlayerId(c)), data);
+  c.send(200, { Data: data });
+});
+// The caller's XP in a room: zero XP for a fresh player, room progression echoed off.
+route("GET", "/rooms/{roomId}/experience/player", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { RoomExperienceEnabled: false, Experience: 0, ConcurrencyCode: crypto.randomUUID() });
+});
+
+// Keepsakes (room mementos) — stubbed like RecFlare: feature on, zero storage, and the
+// room listing answers an EMPTY body (204) rather than an array, which the client reads as
+// "no keepsakes" (it treats a BODY here as data). The categories endpoint must be an object
+// ({Results, TotalResults}) — an array fails its parser and takes the keepsake load down.
+route("GET", "/api/keepsakes/globalconfig", (c) =>
+  c.send(200, { KeepsakeFeatureEnabled: true, KeepsakeRoomLimit: 10, SocialXpBoostEnabled: false }));
+route("GET", "/api/keepsakes/categories", (c) => c.send(200, { Results: [], TotalResults: 0 }));
+route("GET", "/api/keepsakes/rooms/{roomId}", (c) => {
+  // RecFlare answers 204 with NO body (not "null"): the client treats a body here as data.
+  c.res.statusCode = 204;
+  c.res.setHeader("content-length", "0");
+  c.res.end();
+});
+
 // GET /rooms/{id} — during "preparing", the client fetches the full Room to build the scene
 // (subrooms, save). We serve the caller's dorm (roomId == their account id, set in matchmake).
 route("GET", "/rooms/**", (c) => {
@@ -1302,8 +1349,22 @@ route("PUT", "/outfits/me", (c) => {
       storedOutfitById.set(selfPlayerId(c), body);
     }
   } catch { /* unparseable — still ack */ }
-  c.send(200, { Success: true, Error: null, error_id: null });
+  // RecFlare answers { Success, Slot } here (the base envelope carries the slot), NOT the
+  // { Success, Error, error_id } shape most other writes use.
+  let slot = 0;
+  try { const b = c.body ? JSON.parse(c.body) as { Slot?: number } : null; slot = b?.Slot ?? 0; } catch { }
+  c.send(200, { Success: true, Slot: slot });
 });
+// The wardrobe list behind the newer outfit screen (2025 client): every saved slot, ordered,
+// slot 0 included, `[]` when none — same table PUT /outfits/me writes.
+route("GET", "/outfits/me/saved", (c) => {
+  if (!c.authUser) return c.send(401, []);
+  const o = storedOutfitById.get(selfPlayerId(c));
+  c.send(200, o ? [o] : []);
+});
+// Pending avatar gift boxes — none (no purchases/gifting). A JSON array; the client opens
+// each via /api/avatar/v2/gifts/consume.
+route("GET", "/api/avatar/v2/gifts", (c) => c.send(200, []));
 
 // moderation: "not blocked" / "not a referee".
 const NOT_BLOCKED = {
