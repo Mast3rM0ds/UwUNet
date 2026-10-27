@@ -1099,9 +1099,8 @@ route("GET", "/api/customAvatarItems/v1/isCreationAllowedForAccount", (c) =>
 route("GET", "/api/customAvatarItems/v1/isCreationEnabled", (c) => c.send(200, true));
 route("GET", "/api/customAvatarItems/v1/isRenderingEnabled", (c) => c.send(200, true));
 // Resolve custom-avatar-item ids to items: a BARE ARRAY of the ones that matched,
-// in request order. Matches come from the real default-avatar item data; unknown
-// ids are simply absent (not an error), which the client tolerates. Returning []
-// for the client's fixed default-hair set crashes its avatar parser.
+// in request order (RecFlare apps/api/src/routes/avatar.ts). Unknown ids are simply
+// absent — a miss is NOT an error and the client reads the items it got back.
 const bulkCustomItems = (c: Ctx) => {
   const ids: string[] = [...c.query.getAll("customAvatarItemIds")];
   if (c.body) {
@@ -1118,20 +1117,15 @@ const bulkCustomItems = (c: Ctx) => {
     if (seen.has(id)) continue;
     seen.add(id);
     const it = customItemsById.get(id);
-    if (it) {
-      out.push(it);
-    } else if (defaultCustomItems.length > 0) {
-      // A default-avatar id the data source didn't have (e.g. 5726c274): the client
-      // requests it and throws on an empty result. Synthesize a valid item by cloning
-      // a real one under the requested id so the JSON parses and login proceeds.
-      const tmpl = JSON.parse(JSON.stringify(defaultCustomItems[0])) as Record<string, unknown>;
-      tmpl.CustomAvatarItemId = id;
-      tmpl.RankedEntityId = id;
-      if (Array.isArray(tmpl.CurrentSaves)) {
-        for (const s of tmpl.CurrentSaves as Record<string, unknown>[]) s.CustomAvatarItemId = id;
-      }
-      out.push(tmpl);
-    }
+    if (it) out.push(it);
+    // A miss is NOT an error: RecFlare's bulk omits unknown ids and the client reads
+    // the items it got back. We USED to synthesize a fake item for a missing default
+    // id (e.g. 5726c274 — which RecFlare itself returns "not found" for) by cloning a
+    // real one under the requested id. The clone reused the source item's
+    // CustomAvatarItemSaveId / UnityAssetId / assetbundle verbatim, so the client
+    // received two items sharing one save+asset identity — a collision that corrupted
+    // the in-room avatar assembly: the skeleton silently never built (black screen,
+    // audible-but-invisible world). Omit misses, exactly like RecFlare.
   }
   c.send(200, out);
 };
