@@ -8,7 +8,7 @@
 import tls from "node:tls";
 import http from "node:http";
 import crypto from "node:crypto";
-import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, writeFileSync, renameSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,10 +59,20 @@ type User = {
 type Db = { users: Record<string, User>; refresh: Record<string, string>; nextId?: number };
 const DB_FILE = path.join(DATA, "uwunet.db.json");
 function loadDb(): Db {
-  if (existsSync(DB_FILE)) {
+  // Try the live file, then the last-good backup. A valid DB must be an object with `users`,
+  // so a truncated/partial file (which parses to something else, or not at all) is rejected.
+  for (const f of [DB_FILE, `${DB_FILE}.bak`]) {
+    if (!existsSync(f)) continue;
     try {
-      return JSON.parse(readFileSync(DB_FILE, "utf8"));
+      const parsed = JSON.parse(readFileSync(f, "utf8"));
+      if (parsed && typeof parsed === "object" && parsed.users) return parsed as Db;
     } catch {}
+  }
+  // A DB file exists but neither it nor its backup is usable: set it aside instead of letting
+  // the next save overwrite it with an empty DB. This is how a claimed account was lost once —
+  // never silently discard accounts.
+  if (existsSync(DB_FILE)) {
+    try { renameSync(DB_FILE, `${DB_FILE}.corrupt-${Date.now()}`); } catch {}
   }
   return { users: {}, refresh: {}, nextId: 1000000 };
 }
@@ -74,8 +84,14 @@ function allocAccountId(): string {
 }
 const db = loadDb();
 function saveDb() {
+  // Atomic save: write a temp file, snapshot the current good DB to .bak, then rename the temp
+  // over the live file. A crash at any point leaves either the old DB or the full new one — never
+  // a half-written file that loadDb would reject (and then clobber with an empty DB).
   try {
-    writeFileSync(DB_FILE, JSON.stringify(db, null, 1));
+    const tmp = `${DB_FILE}.tmp`;
+    writeFileSync(tmp, JSON.stringify(db, null, 1));
+    try { if (existsSync(DB_FILE)) copyFileSync(DB_FILE, `${DB_FILE}.bak`); } catch {}
+    renameSync(tmp, DB_FILE);
   } catch {}
 }
 
