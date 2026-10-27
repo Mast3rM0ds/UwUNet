@@ -62,7 +62,7 @@ function Strip-UwUNetHosts {
 
 if ($Undo) {
     Write-Host '== UwUNet Windows setup: UNDO ==' -ForegroundColor Cyan
-    Set-Content -Path $hostsFile -Value (Strip-UwUNetHosts) -Encoding ascii
+    [System.IO.File]::WriteAllLines($hostsFile, [string[]]@(Strip-UwUNetHosts))
     ipconfig /flushdns | Out-Null
     Get-ChildItem Cert:\LocalMachine\Root |
         Where-Object { $_.Subject -eq 'CN=UwUNet CA, O=UwUNet, C=US' } |
@@ -81,10 +81,10 @@ Write-Host '[ok] UwUNet CA trusted (LocalMachine\Root).'
 
 # 2) Redirect the rec.net domains to the UwUNet server (backup first).
 Copy-Item $hostsFile "$hostsFile.uwunet-bak" -Force -ErrorAction SilentlyContinue
-$lines = Strip-UwUNetHosts
+$lines = @(Strip-UwUNetHosts)
 $lines += $marker
 foreach ($s in $subs) { $lines += ('{0} {1}.rec.net' -f $VPS, $s) }
-Set-Content -Path $hostsFile -Value $lines -Encoding ascii
+[System.IO.File]::WriteAllLines($hostsFile, [string[]]$lines)
 Write-Host ("[ok] hosts updated: {0} rec.net domains -> {1}" -f $subs.Count, $VPS)
 
 # 3) Flush DNS so the new mapping takes effect immediately.
