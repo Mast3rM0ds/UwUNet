@@ -953,8 +953,30 @@ route("GET", "/player/qos", (c) =>
   ]));
 route("PUT", "/player/photonregionpings", (c) => c.empty());
 route("PUT", "/player/gameserverregionpings", (c) => c.empty());
-// connection-info: the realtime creds in the {success,value,error} envelope. We have no
-// Photon relay yet, so the ids/room are empty strings (valid shape, "in no instance").
+// Voice: when a UwUNet voice server is running (server/src/voice/voice-server.ts), set
+// UWU_VOICE_ADDR="<ip>:<port>" so connection-info advertises it as VoiceConnectionInfo and
+// the client dials in for in-room (Dissonance) voice. UNSET = "" = voice off, which is the
+// SAFE default: a VoiceConnectionInfo that points at a server that doesn't answer fails the
+// client's room-load voice stage (FailedToConnectToVoice) — worse than no voice. See
+// docs/voice-server.md.
+const VOICE_ADDR = process.env.UWU_VOICE_ADDR ?? "";
+const VOICE_SERVER_ID = process.env.UWU_VOICE_SERVER_ID ?? "uwu-voice-1";
+// Record account -> room instance so the voice server can route by AI (the only identity in
+// the Tachyon connect payload). The voice server reads this file; see voice-instance-routing.
+const recordVoiceRoute = (accountId: number, instance: string) => {
+  try {
+    const rf = path.join(DATA, "voice-routing.json");
+    let map: Record<string, string> = {};
+    if (existsSync(rf)) { try { map = JSON.parse(readFileSync(rf, "utf8")); } catch { map = {}; } }
+    if (map[String(accountId)] === instance) return; // no change
+    map[String(accountId)] = instance;
+    writeFileSync(rf, JSON.stringify(map));
+  } catch { /* routing is best-effort */ }
+};
+
+// connection-info: the realtime creds in the {success,value,error} envelope. Photon realtime
+// comes from data/photon.json; voice is our own LiteNetLib/Dissonance server, advertised only
+// when UWU_VOICE_ADDR is set and the player is in a real instance.
 // experiments must be a full ConnectionExperiments object (verbatim from the reference).
 route("GET", "/player/connection-info", (c) => {
   if (!c.authUser) return c.send(401, {});
@@ -971,6 +993,11 @@ route("GET", "/player/connection-info", (c) => {
   const presence = presenceById.get(selfPlayerId(c)) as Record<string, unknown> | undefined;
   const photonRoomId = (presence?.photonRoomId as string) ?? "";
   const photonRegion = (presence?.photonRegion as string) ?? ph.region ?? "usw";
+  // Advertise voice only for a real instance (a numeric id that isn't offline Orientation -2),
+  // and only when a voice server address is configured. Otherwise "" = voice off (safe).
+  const instanceId = typeof presence?.roomInstanceId === "number" ? (presence.roomInstanceId as number) : null;
+  const voiceOn = VOICE_ADDR !== "" && instanceId !== null && instanceId !== ORIENTATION_INSTANCE_ID;
+  if (voiceOn) recordVoiceRoute(selfPlayerId(c), String(instanceId));
   c.send(200, {
     success: true,
     value: {
@@ -980,8 +1007,8 @@ route("GET", "/player/connection-info", (c) => {
       photonChatAppId: ph.chatAppId ?? "",
       photonRegion,
       photonRoomId,
-      voiceConnectionInfo: "",
-      voiceServerId: "",
+      voiceConnectionInfo: voiceOn ? VOICE_ADDR : "",
+      voiceServerId: voiceOn ? VOICE_SERVER_ID : "",
       experiments: {
         networkTransformSyncInterval: 10.0,
         shouldUseUnreliableOnChange: false,
