@@ -1268,10 +1268,17 @@ const publicRoomInstance = (roomId: number | string, subRoomId?: number | string
   // float, so take it modulo a safe range as BigInt, then add the base as a plain Number.
   const instBase =
     Number(BigInt(String(roomId)) % 9000000000n) + PUBLIC_INSTANCE_BASE;
+  // Wire typing: the matchmake instance's id fields are strict longs on the client. Small
+  // ids convert to numbers; big (>2^53) ids ride the BIG sentinel and are unquoted into raw
+  // digit literals by send().
+  const wireId = (v: unknown): unknown => {
+    const s = unwrapId(String(v));
+    return /^\d{16,}$/.test(s) ? `__BIG__${s}__` : Number(s);
+  };
   return {
     roomInstanceId: instBase,
-    roomId: String(roomId),
-    subRoomId: sub,
+    roomId: wireId(roomId),
+    subRoomId: wireId(sub ?? sr?.subRoomId ?? 1),
     roomInstanceType: 0, // Public
     location: sr?.scene ?? "",
     dataBlob: "",
