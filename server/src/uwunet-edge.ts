@@ -598,12 +598,18 @@ const rroDtoList = (): Record<string, unknown>[] =>
 // lowercase (the reference lists.app.ts ROW_FEEDS). "*" = every browsable RRO. Unknown key →
 // undefined. Ids that are not RROs are DROPPED — roomDtoFor() would otherwise synthesize a
 // dorm for them when the client resolves the row through /rooms/bulk.
-const roomRowIds = (key: string): number[] | undefined => {
+// Ids may be NUMBER or STRING — ported room ids exceed 2^53 (the client's 64-bit RoomIds)
+// and MUST survive untouched; they resolve through rroRoomById(String(id)). Anything else
+// is DROPPED — roomDtoFor() would otherwise synthesize a dorm when the row lands on the
+// client through /rooms/bulk.
+const roomRowIds = (key: string): string[] | undefined => {
   const f = readStatic("room-rows.json", {}) as { rows?: Record<string, unknown> };
   const v = f.rows?.[key.toLowerCase()];
-  if (v === "*") return rroDtoList().map((d) => Number(d.RoomId));
+  if (v === "*") return rroDtoList().map((d) => String(d.RoomId));
   if (!Array.isArray(v)) return undefined;
-  return v.map(Number).filter((n) => Number.isInteger(n) && rroRoomById(n) !== undefined);
+  return v
+    .map((x) => (typeof x === "number" || typeof x === "string" ? String(x) : ""))
+    .filter((id) => id !== "" && rroRoomById(id) !== undefined);
 };
 const dormRoomDto = (id: number, username: string) => ({
   ...roomTemplate,
