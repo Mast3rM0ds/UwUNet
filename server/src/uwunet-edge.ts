@@ -66,6 +66,10 @@ type Db = {
   // relationships[a][b] = a's edge toward b. Stored on both sides so each player's /get is a
   // direct lookup and each keeps their own flags.
   relationships?: Record<string, Record<string, Rel>>;
+  // Per-account worn outfit (slot 0), the body the client PUTs to /outfits/me. Persisted so an
+  // avatar survives an edge restart (it used to live in an in-memory map → reverted to default
+  // on every deploy/reboot).
+  outfits?: Record<string, Record<string, unknown>>;
 };
 const DB_FILE = path.join(DATA, "uwunet.db.json");
 function loadDb(): Db {
@@ -84,7 +88,7 @@ function loadDb(): Db {
   if (existsSync(DB_FILE)) {
     try { renameSync(DB_FILE, `${DB_FILE}.corrupt-${Date.now()}`); } catch {}
   }
-  return { users: {}, refresh: {}, nextId: 1000000, relationships: {} };
+  return { users: {}, refresh: {}, nextId: 1000000, relationships: {}, outfits: {} };
 }
 // RecNet account ids are integers; allocate sequentially (stored as a string).
 function allocAccountId(): string {
@@ -93,6 +97,7 @@ function allocAccountId(): string {
   return String(id);
 }
 const db = loadDb();
+if (!db.outfits) db.outfits = {}; // field added later; back-fill for DBs saved before it existed
 function saveDb() {
   // Atomic save: write a temp file, snapshot the current good DB to .bak, then rename the temp
   // over the live file. A crash at any point leaves either the old DB or the full new one — never
@@ -2022,11 +2027,13 @@ const storedOutfit = () => ({
 // Per-player worn outfit (slot 0). The client builds/normalizes its avatar on spawn and
 // PUTs the result here; a 404 on that write left the avatar unestablished (no skeleton, so
 // the head-pivot camera renders black). We store it and read it back, like the reference's
-// `outfit` table. Nothing saved yet → the default outfit.
-const storedOutfitById = new Map<number, Record<string, unknown>>();
+// `outfit` table. PERSISTED to the DB (db.outfits[id]) so the avatar survives an edge restart
+// — it used to live in an in-memory map and reverted to default on every deploy/reboot.
+// Nothing saved yet → the default outfit.
+const getOutfit = (id: number): Record<string, unknown> | undefined => db.outfits?.[String(id)];
 route("GET", "/outfits/me", (c) => {
   if (!c.authUser) return c.send(401, {});
-  c.send(200, storedOutfitById.get(selfPlayerId(c)) ?? storedOutfit());
+  c.send(200, getOutfit(selfPlayerId(c)) ?? storedOutfit());
 });
 // Save the caller's outfit. the reference stores the body verbatim in the slot it names (slot 0 =
 // worn, what GET reads) and answers the base envelope WITHOUT a Value — the outfit is not
@@ -2036,7 +2043,8 @@ route("PUT", "/outfits/me", (c) => {
   try {
     const body = c.body ? (JSON.parse(c.body) as Record<string, unknown>) : null;
     if (body && (typeof body.Slot !== "number" || body.Slot === 0)) {
-      storedOutfitById.set(selfPlayerId(c), body);
+      (db.outfits ??= {})[String(selfPlayerId(c))] = body;
+      saveDb(); // persist so the avatar survives an edge restart
     }
   } catch { /* unparseable — still ack */ }
   // the reference answers the bare { Success, Error, error_id } envelope — NOT { Success, Slot }.
@@ -2046,7 +2054,7 @@ route("PUT", "/outfits/me", (c) => {
 // slot 0 included, `[]` when none — same table PUT /outfits/me writes.
 route("GET", "/outfits/me/saved", (c) => {
   if (!c.authUser) return c.send(401, []);
-  const o = storedOutfitById.get(selfPlayerId(c));
+  const o = getOutfit(selfPlayerId(c));
   c.send(200, o ? [o] : []);
 });
 // Pending avatar gift boxes — none (no purchases/gifting). A JSON array; the client opens
