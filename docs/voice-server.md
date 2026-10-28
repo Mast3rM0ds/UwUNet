@@ -112,18 +112,33 @@ instance at `player/connection-info` issuance** and looking it up by `AI` on con
 crypto, no client change). `AI` is client-asserted/unauthenticated; bind with a server nonce later if
 it matters. Alternative: a **per-instance port** (routing implicit, most robust) — a later option.
 
-## Client patch (stay plaintext)
+## Client patch (stay plaintext) — must be done at RUNTIME
 
-The approval flips the client to encrypted voice with a key we can't produce. Neuter it so the client
-stays plaintext:
+The approval flips the client to encrypted voice with a key we can't produce, and the key-exchange
+callback `CDJMICBEALM` (`0x8277880`) calls `RSA.Decrypt(KT)` with no null check, so a KT-less Carrot
+throws → `FailedToConnectToVoice`. We must make the client **skip the crypto and stay plaintext**.
 
-- **`LiteNetLibTransport.RecRoom_SetEncryptionInfo(ulong, byte[])`** `0x735CA20` — make it a no-op
-  (early `ret`), **or** `RecRoomClientEncryptLayer.SetKey` `0x735DF90`. Far smaller than swapping the
-  1024-bit RSA modulus. Both the host and the friend re-run the patch (they patched once already).
+**The patch can only be applied at runtime.** `GameAssembly.dll` is fully encrypted at rest
+(entropy ~8.0) and `global-metadata.dat` is obfuscated (magic `RRRR`, not IL2CPP's `FA B1 1B AF`;
+string literals absent) — the real code/strings exist only in memory after the packer + the
+2025Patch injector unpack them. So there is no file to edit; `re/voice-patch.c` attaches to the live
+process (like `re/uwu-patch.c` does for Referee), finds GameAssembly's mapped base, and reads/writes
+at the carved RVAs:
 
-(Full-encryption alternative: patch the RSA modulus in `DMIBBCKIGCG..cctor` `0x827A820` to our
-keypair, then decrypt `CKA`/`CIA` and mint a real `KT` to the client's `CPK`. Bigger patch; not
-needed for first audio.)
+- `re/voice-patch.c dump` — print the **decrypted** bytes of `CDJMICBEALM` `0x8277880`,
+  `RecRoom_SetEncryptionInfo` `0x735CA20`, `SetKey` `0x735DF90`. Needed to craft the exact patch
+  (a `jmp` over the RSA.Decrypt + SetEncryptionInfo block, landing on the post-crypto success path —
+  or a `ret` at `SetKey` if skipping just the key-apply is enough).
+- `re/voice-patch.c poke <rva> <hexbytes>` — apply the crafted patch to the running game.
+
+Each player (host + friend) runs the tool after the game is up, each session (the unpacked code is
+re-created per launch). Candidate minimal patches, to confirm against a dump:
+`SetKey 0x735DF90` → `c3` (ret) keeps the layer key null (plaintext); but the `RSA.Decrypt` throw in
+`CDJMICBEALM` happens first, so the real fix is a jmp inside `CDJMICBEALM` past the crypto.
+
+(Full-encryption alternative, documented but blocked: swap the RSA modulus so we can mint a real `KT`
+— but the transport cipher is Burst-compiled and unknown, so we still couldn't read the client's
+encrypted voice. Plaintext is the only workable path, hence the client patch.)
 
 ## Build milestones
 
