@@ -1418,8 +1418,9 @@ route("GET", "/dormroom/me", (c) => c.send(200, selfPlayerId(c)));
 route("GET", "/rooms", (c) => {
   const idParam = c.query.get("id");
   if (idParam) {
-    const id = Number.parseInt((idParam.split(",")[0] ?? "").trim(), 10);
-    if (!Number.isNaN(id)) {
+    // Ids stay strings: /rooms?id= can carry a 64-bit room id which a Number would round.
+    const id = (idParam.split(",")[0] ?? "").trim();
+    if (/^\d+$/.test(id)) {
       c.send(200, roomDtoFor(id));
       return;
     }
