@@ -410,10 +410,48 @@ route("GET", "/", (c) => {
 });
 
 // Static config bodies for build 20250718.01 (see server/static/README.md).
+// 64-bit ids defeat JS numbers: JSON.parse (and Number) round ports ids like 649924194922273060
+// to ...280, so a room parsed, held and re-serialized by this edge is NEVER byte-exact and the
+// client's id-typed fields (RoomId/SubRoomId, strict longs) reject or mismatch it ("room doesn't
+// exist"). Policy: EVERY 16+ digit integer literal in a static file loads wrapped as a
+// "__BIG__<digits>__" sentinel string (quoteBigLiterals), travels through the edge untouched,
+// and send() unquotes it back to a raw digit literal on the wire. Any id comparison/on the edge
+// canonicalizes both sides through unwrapId. Anything < 16 digits parses as a plain number.
 const STATIC = path.join(HERE, "static");
+const unwrapId = (s: string): string => s.replace(/__BIG__(\d+)__/g, "$1");
+const quoteBigLiterals = (txt: string): string => {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  let i = 0;
+  while (i < txt.length) {
+    const ch = txt[i];
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      i++;
+    } else if (ch === '"') {
+      inStr = true;
+      out += ch;
+      i++;
+    } else if (ch >= "0" && ch <= "9") {
+      let j = i;
+      while (j < txt.length && txt[j] >= "0" && txt[j] <= "9") j++;
+      const digits = txt.slice(i, j);
+      out += digits.length >= 16 ? `__BIG__${digits}__` : digits;
+      i = j;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return out;
+};
 const readStatic = (name: string, fallback: unknown): unknown => {
   try {
-    return JSON.parse(readFileSync(path.join(STATIC, name), "utf8"));
+    return JSON.parse(quoteBigLiterals(readFileSync(path.join(STATIC, name), "utf8")));
   } catch {
     return fallback;
   }
@@ -484,8 +522,8 @@ const rroData = readStatic("rro-rooms.json", { rooms: {}, byName: {} }) as {
   rooms: Record<string, Record<string, unknown>>;
   byName: Record<string, number>;
 };
-const rroRoomById = (id: number): Record<string, unknown> | undefined => rroData.rooms[String(id)];
-const rroRoomIdByName = (name: string): number | undefined => rroData.byName[name.toLowerCase()];
+const rroRoomById = (id: number | string): Record<string, unknown> | undefined => rroData.rooms[unwrapId(String(id))];
+const rroRoomIdByName = (name: string): number | string | undefined => rroData.byName[name.toLowerCase()];
 
 // RRO ownership: make one account the Creator/owner of every first-party room, so they show
 // as that player's rooms and that account can manage/build them. Resolved from the DB by
@@ -523,7 +561,7 @@ const rroSubRoom = (
   const sr = ((Array.isArray(dto.SubRooms) ? (dto.SubRooms as Record<string, unknown>[])[0] : undefined) ??
     {}) as Record<string, unknown>;
   return {
-    subRoomId: sr.SubRoomId !== undefined ? String(sr.SubRoomId) : "1",
+    subRoomId: sr.SubRoomId !== undefined ? unwrapId(String(sr.SubRoomId)) : "1",
     scene: typeof sr.UnitySceneId === "string" ? (sr.UnitySceneId as string) : "",
     name: typeof dto.Name === "string" ? (dto.Name as string) : `Room${id}`,
     maxCapacity: typeof sr.MaxPlayers === "number" ? (sr.MaxPlayers as number) : 16,
@@ -537,7 +575,7 @@ const rroSubRoomSave = (
 ): Record<string, unknown> | undefined => {
   const dto = rroRoomById(roomId);
   if (!dto || !Array.isArray(dto.SubRooms)) return undefined;
-  const sr = (dto.SubRooms as Record<string, unknown>[]).find((s) => String(s.SubRoomId) === String(subRoomId));
+  const sr = (dto.SubRooms as Record<string, unknown>[]).find((s) => unwrapId(String(s.SubRoomId)) === unwrapId(String(subRoomId)));
   const save = sr?.CurrentSave;
   return save && typeof save === "object" ? (save as Record<string, unknown>) : undefined;
 };
@@ -936,7 +974,7 @@ const orientationRoomDto = () => orientationRoomStatic;
 // Center -> its real DTO; everything else is a player dorm. `id` may be a STRING: ported room
 // ids exceed 2^53 and a Number round-trip would corrupt them (649924194922273060 → ...280).
 const roomDtoFor = (id: number | string): Record<string, unknown> => {
-  const s = String(id);
+  const s = unwrapId(String(id));
   const n = Number(s);
   if (Number.isSafeInteger(n) && n === ORIENTATION_ROOM_ID) return orientationRoomDto();
   return rroRoomById(s) ?? (Number.isSafeInteger(n)
@@ -2857,7 +2895,9 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     body,
     authUser: authTok ? userById(Number(authTok.userId)) : null,
     send: (status, obj) => {
-      const bodyStr = JSON.stringify(obj);
+      // 64-bit numeric ids travel as "__BIG__<digits>__" sentinel strings inside the edge
+      // (JS numbers would round them); unquote to raw digit literals on the wire.
+      const bodyStr = JSON.stringify(obj).replace(/"__BIG__(\d+)__"/g, "$1");
       const buf = Buffer.from(bodyStr, "utf8");
       // DEBUG: log ALL response bodies (temporary) to trace the room-load "No such room".
       log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status, body: bodyStr });
