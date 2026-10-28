@@ -529,7 +529,7 @@ const rroRoomIdByName = (name: string): number | string | undefined => rroData.b
 // as that player's rooms and that account can manage/build them. Resolved from the DB by
 // username or display name (default "sonakrie"), or forced with UWU_RRO_OWNER_ID. Applied to
 // the loaded RRO data in place at startup — restart the edge once the account exists.
-const RRO_OWNER_NAME = (process.env.UWU_RRO_OWNER ?? "sonakrie").toLowerCase();
+const RRO_OWNER_NAME = (process.env.UWU_RRO_OWNER ?? "UwUArchivist").toLowerCase();
 const rroOwnerId: number | null = (() => {
   const envId = Number(process.env.UWU_RRO_OWNER_ID);
   if (Number.isInteger(envId) && envId > 0) return envId;
