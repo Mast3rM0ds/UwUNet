@@ -2743,8 +2743,12 @@ const handleWsUpgrade = (req: http.IncomingMessage, socket: any, _head: Buffer) 
         socket.write(wsFrame("{}" + RS));
         continue;
       }
-      // Keep-alive: SignalR ping {"type":6}; answer with a ping, ignore the rest.
-      if (text.includes('"type":6')) socket.write(wsFrame('{"type":6}' + RS));
+      // Keep-alive: SignalR ping {"type":6}; answer with a ping.
+      if (text.includes('"type":6')) { socket.write(wsFrame('{"type":6}' + RS)); continue; }
+      // Any other hub message is a client->server invocation (SignalR type 1). Party
+      // operations (invite / join / leave / travel-together) ride THIS hub, not REST, so
+      // log them to the harvest — this is how we learn the party protocol to implement it.
+      log({ event: "ws-msg", host: req.headers.host, path: url, text: text.slice(0, 1200) });
     }
   });
   socket.on("error", () => { try { socket.destroy(); } catch { /* */ } });
