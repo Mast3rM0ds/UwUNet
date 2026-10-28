@@ -440,7 +440,7 @@ const quoteBigLiterals = (txt: string): string => {
       let j = i;
       while (j < txt.length && txt[j] >= "0" && txt[j] <= "9") j++;
       const digits = txt.slice(i, j);
-      out += digits.length >= 16 ? `__BIG__${digits}__` : digits;
+      out += digits.length >= 16 ? `"__BIG__${digits}__"` : digits;
       i = j;
     } else {
       out += ch;
