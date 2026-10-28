@@ -1395,12 +1395,13 @@ route("GET", "/photon_access_token", (c) => {
   if (!c.authUser) return c.send(401, {});
   const id = selfPlayerId(c);
   const presence = presenceById.get(id) as Record<string, unknown> | undefined;
-  const roomInstanceId =
-    presence && typeof presence.roomInstanceId === "number" ? (presence.roomInstanceId as number) : null;
-  const roomId = presence && typeof presence.roomId === "number" ? (presence.roomId as number) : null;
+  const roomInstanceIdRaw = presence?.roomInstanceId;
+  const roomIdRaw = presence?.roomId;
+  const roomInstanceId = roomInstanceIdRaw !== undefined ? Number(unwrapId(String(roomInstanceIdRaw))) : null;
+  const roomId = roomIdRaw !== undefined ? unwrapId(String(roomIdRaw)) : null;
   if (isGod(id)) return c.send(200, godPhotonAccessTokenDto(roomInstanceId)); // build anything, anywhere
   // The caller owns their own dorm (roomId === their account id) → Creator; otherwise a visitor.
-  const role = roomId === id ? ROLE_CREATOR : ROLE_NONE;
+  const role = roomId !== null && Number(roomId) === id ? ROLE_CREATOR : ROLE_NONE;
   c.send(200, photonAccessTokenDto(roomInstanceId, role));
 });
 
@@ -2896,8 +2897,15 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     authUser: authTok ? userById(Number(authTok.userId)) : null,
     send: (status, obj) => {
       // 64-bit numeric ids travel as "__BIG__<digits>__" sentinel strings inside the edge
-      // (JS numbers would round them); unquote to raw digit literals on the wire.
-      const bodyStr = JSON.stringify(obj).replace(/"__BIG__(\d+)__"/g, "$1");
+      // (JS numbers would round them); unquote to raw digit literals on the wire. Also
+      // de-quote SMALL digit strings on numeric-typed id fields (the client is strict-typed:
+      // RoomId etc. parse as longs, and live rec.net always sent them as bare numbers).
+      const bodyStr = JSON.stringify(obj)
+        .replace(/"__BIG__(\d+)__"/g, "$1")
+        .replace(
+          /"(RoomId|SubRoomId|RoomInstanceId|DormRoomId|SubRoomDataSaveId|SavedByAccountId|CreatorAccountId|AccountId|PlayerId|OwnerId|SubjectAccountId)":"(\d{1,15})"/g,
+          '"$1":$2',
+        );
       const buf = Buffer.from(bodyStr, "utf8");
       // DEBUG: log ALL response bodies (temporary) to trace the room-load "No such room".
       log({ event: "response", host: req.headers.host, method: req.method, url: req.url, path: p, status, body: bodyStr });
