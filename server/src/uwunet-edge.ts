@@ -2135,7 +2135,7 @@ route("GET", "/rooms/**", (c) => {
   // and non-numeric ids (bulk, named/*) stay tolerated 404s.
   const m = /^\/rooms\/(\d+)$/.exec(c.path);
   if (!m) return c.send(404, { Code: 404, Error: "no such room" });
-  const id = Number.parseInt(m[1], 10);
+  const id = m[1]; // string-exact: 64-bit room ids round as Numbers
   const u = userById(id);
   c.send(200, roomDtoFor(id));
 });
