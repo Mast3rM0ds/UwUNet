@@ -136,7 +136,7 @@ async function listShardZips(shard) {
   return (md.files ?? []).filter((f) => f.name.endsWith(".zip")).map((f) => f.name);
 }
 
-async function cdTxt(shard, zipName) {
+async function cdKeys(shard, zipName) {
   // central directory of the zip, via ranged request (single GET: EOCD + CD)
   const url = `https://archive.org/download/${shard}/${zipName}`;
   const head = await fetch(url, { method: "HEAD", headers: { "User-Agent": UA } });
@@ -172,13 +172,28 @@ async function cdTxt(shard, zipName) {
 }
 
 async function buildIndex() {
-  const q = encodeURIComponent("recroom-cdn-room-files");
-  const res = await fetch(`https://archive.org/advancedsearch.php?q=${q}&fl[]=identifier&rows=300&output=json`, { headers: { "User-Agent": UA } });
-  const ids = (await res.json()).response.docs.map((d) => d.identifier).filter((i) => i.startsWith("recroom-cdn-room-files-"));
+  // advancedsearch: encode [] (bare [] in the URL pares out server-side) and page through
+  const ids = [];
+  let page = 1;
+  for (;;) {
+    const u = new URL("https://archive.org/advancedsearch.php");
+    u.search = new URLSearchParams({ q: "recroom-cdn-room-files", rows: "200", page: String(page), output: "json", "fl[]": "identifier" }).toString();
+    const res = await fetch(u, { headers: { "User-Agent": UA } });
+    const docs = (await res.json()).response.docs;
+    if (!docs.length) break;
+    for (const doc of docs) {
+      const id = doc.identifier;
+      if (id?.startsWith("recroom-cdn-room-files-") && !ids.includes(id)) ids.push(id);
+    }
+    page++;
+    if (page > 20) break;
+  }
   const idx = await loadIndex();
   let done = 0;
   for (const shard of ids) {
-    if (idx.shards[shard]) {
+    // skip only shards a FULL scan previously completed (a handful of seeded keys
+    // from shard_map seeding must not blocks-list the shard forever)
+    if (idx.shards[shard]?.keys?.length > 1000) {
       done++;
       continue;
     }
@@ -268,6 +283,7 @@ const toRawNumberSafe = (v) => {
 };
 
 async function port(name) {
+  const strict = process.argv.includes("--strict");
   const dto = await roomDto(name);
   const image = await fetchImage(dto.ImageName);
   if (image) {
@@ -296,7 +312,16 @@ async function port(name) {
       ok++;
       continue;
     }
-    const loc = await findBlob(key, idx);
+    let loc = null;
+    try {
+      loc = await findBlob(key, idx);
+    } catch {
+      // blob was never archived (andy_liner's capture is a subset of the live CDN)
+      if (strict) throw new Error(`--strict: blob ${key} (${sr.Name}) not found in any shard — aborting`);
+      console.log(`  ${sr.Name}: blob ${key} NOT ARCHIVED — subroom drops to baked scene`);
+      sr.CurrentSave = null;
+      continue;
+    }
     process.stdout.write(`  ${key}: from ${loc.shard} ... `);
     const buf = await downloadBlob(loc.shard, loc.zip, key);
     const h = sha256b64(buf);
@@ -309,8 +334,9 @@ async function port(name) {
     console.log(`✓ ${(buf.length / 1024).toFixed(0)} KB`);
     ok++;
   }
-  if (ok < (dto.SubRooms ?? []).length) throw new Error(`${ok}/${dto.SubRooms?.length} blobs verified — aborting registration`);
-  console.log(`✓ all ${ok} blobs hash-verified`);
+  if (roomsList.length) console.log(`! ${roomsList.join(", ")} — sha256 mismatches, registration aborted`);
+  else console.log(`✓ ${ok}/${(dto.SubRooms ?? []).length} blobs hash-verified`);
+  if (roomsList.length) process.exit(1);
 
   // register in rro-rooms.json
   const rroPath = path.join(staticDir, "rro-rooms.json");
