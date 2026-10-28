@@ -18,8 +18,8 @@ import * as dgram from "node:dgram";
 import { readFileSync, existsSync } from "node:fs";
 import * as path from "node:path";
 import {
-  Reader, Writer, layerWrap, layerUnwrap, packUint, packInt, unpackUint,
-  xxhash64, messageHash32,
+  Reader, Writer, layerWrap, layerUnwrap, packUint, packInt, unpackUint, unpackInt,
+  xxhash64,
 } from "./wire.ts";
 
 const VOICE_PORT = Number(process.env.VOICE_PORT ?? 8470);
@@ -93,23 +93,33 @@ function ngoWriteBatch(count: number, messages: Buffer): Buffer {
   return Buffer.concat([head, messages]);
 }
 
-// ConnectionApprovedMessage (server->client). Carries the Tachyon "Carrot" JSON in
-// Payload. Order per ngo-fork-batch-and-approval. MessageVersions: the registered
-// message types with their XXHash32(typeName) + version; we advertise the minimum.
-const APPROVED_HASH = messageHash32("Unity.Netcode.ConnectionApprovedMessage");
+// NGO message-type indices, confirmed live 2026-10-28 from the client's ConnectionRequest
+// MessageVersions (their XXHash32(typeName) matched these, in the client's own order):
+//   0 ConnectionApproved · 1 ConnectionRequest · 2 DisconnectReason · 3 NamedMessage ·
+//   4 ServerLog · 5 TimeSync · 6 Unnamed · 7 (null). The approval echoes this exact set,
+//   so the client's SetServerMessageOrder matches 1:1 and NamedMessage stays index 3.
+const MSG = { ConnectionApproved: 0, ConnectionRequest: 1, NamedMessage: 3 } as const;
+const RELIABLE_CHANNEL = 2; // the channel the client's NGO handshake uses
 
-function buildConnectionApproved(ownerClientId: number, payloadJson: string): Buffer {
+/** One batched NGO message: bitpacked type index, bitpacked size, then the body. */
+function ngoMessage(typeIndex: number, body: Buffer): Buffer {
   const w = new Writer();
-  // MessageVersions — advertise just ConnectionApprovedMessage@0 for now (live
-  // capture of the client's ConnectionRequest gives the full set it expects).
-  packInt(w, 1);                 // MessageVersions.Length (zigzag)
-  w.u32(APPROVED_HASH >>> 0);    // entry: u32 Hash raw LE
-  packInt(w, 0);                 // entry: Version (zigzag)
-  packUint(w, ownerClientId);    // OwnerClientId (ulong overload, NO zigzag)
-  packInt(w, 0);                 // NetworkTick (zigzag)
-  // Payload (the fork's extra string): length then one bitpacked ushort per UTF-16 char
-  packUint(w, payloadJson.length);
-  for (let i = 0; i < payloadJson.length; i++) packUint(w, payloadJson.charCodeAt(i));
+  packUint(w, typeIndex);
+  packUint(w, body.length);
+  w.bytes(body);
+  return w.build();
+}
+
+// ConnectionApprovedMessage body (server->client). Order per ngo-fork-batch-and-approval:
+// MessageVersions (echoed verbatim from the request so the order matches 1:1), then
+// OwnerClientId, NetworkTick, then the Payload string carrying the Tachyon "Carrot" JSON.
+function buildConnectionApproved(ownerClientId: number, payloadJson: string, msgVersionsRaw: Buffer): Buffer {
+  const w = new Writer();
+  w.bytes(msgVersionsRaw);         // length (zigzag) + N×(u32 hash + zigzag version), verbatim
+  packUint(w, ownerClientId);      // OwnerClientId (ulong overload, NO zigzag)
+  packInt(w, 0);                   // NetworkTick (zigzag)
+  packUint(w, payloadJson.length); // Payload.Length (unsigned)
+  for (let i = 0; i < payloadJson.length; i++) packUint(w, payloadJson.charCodeAt(i)); // bitpacked ushort/char
   return w.build();
 }
 
@@ -165,6 +175,9 @@ interface Peer {
   instance: string;
   approved: boolean;
   lastSeen: number;
+  frags: Map<string, { total: number; parts: Map<number, Buffer> }>; // reliable fragment reassembly
+  recvSeqs: Map<number, Set<number>>; // per-channel received sequences, for acks
+  outSeq: Map<number, number>;        // per-channel outgoing sequence counter
 }
 
 const peers = new Map<string, Peer>();
@@ -247,6 +260,7 @@ function handleConnectRequest(inner: Buffer, rinfo: dgram.RemoteInfo, key: strin
     peer = {
       key, rinfo, peerId: nextPeerId++, connectionTime, connectNum: 0,
       instance: "global", approved: false, lastSeen: Date.now(),
+      frags: new Map(), recvSeqs: new Map(), outSeq: new Map(),
     };
     peers.set(key, peer);
   } else {
@@ -257,21 +271,67 @@ function handleConnectRequest(inner: Buffer, rinfo: dgram.RemoteInfo, key: strin
 }
 
 function handleChanneled(peer: Peer, inner: Buffer) {
-  // Stock LiteNetLib channeled header: [0]=prop,[1..2]=sequence,[3]=channelId,
-  // then payload. We must Ack it for reliable delivery, then hand the payload up.
-  // Reliability (ack bitfields, ordering, fragmentation) is scaffolded here; a live
-  // capture confirms the header size for this build before we trust ordering.
+  // Stock LiteNetLib channeled header (confirmed live 2026-10-28):
+  //   [0] prop (bit7 = fragmented, bits5-6 = connNum, bits0-4 = Channeled) ·
+  //   [1..2] sequence · [3] channelId · then, if fragmented:
+  //   [4..5] fragmentId · [6..7] fragmentPart · [8..9] fragmentsTotal · [10..] payload.
+  const fragmented = (inner[0] & 0x80) !== 0;
   const seq = inner.readUInt16LE(1);
   const channel = inner[3];
-  sendAck(peer, channel, seq);
-  handleNgoDatagram(peer, inner.subarray(4));
+  recordAndAck(peer, channel, seq); // ack so the client stops retransmitting
+
+  if (!fragmented) { handleNgoDatagram(peer, inner.subarray(4)); return; }
+
+  const fragId = inner.readUInt16LE(4);
+  const fragPart = inner.readUInt16LE(6);
+  const fragTotal = inner.readUInt16LE(8);
+  const fkey = `${channel}:${fragId}`;
+  let frag = peer.frags.get(fkey);
+  if (!frag) { frag = { total: fragTotal, parts: new Map() }; peer.frags.set(fkey, frag); }
+  frag.parts.set(fragPart, Buffer.from(inner.subarray(10)));
+  if (frag.parts.size < frag.total) return; // more fragments to come
+  peer.frags.delete(fkey);
+  const chunks: Buffer[] = [];
+  for (let i = 0; i < frag.total; i++) chunks.push(frag.parts.get(i) ?? Buffer.alloc(0));
+  onReassembledBatch(peer, channel, Buffer.concat(chunks));
 }
 
-function sendAck(peer: Peer, channel: number, seq: number) {
-  // Minimal Ack: prop, channelId, then an ack window. TODO: real windowed bitfield
-  // once the channel header is confirmed from capture.
-  const w = new Writer().u8(P.Ack).u8(channel).u16(seq);
-  send(peer, w.build());
+function recordAndAck(peer: Peer, channel: number, seq: number) {
+  let seqs = peer.recvSeqs.get(channel);
+  if (!seqs) { seqs = new Set(); peer.recvSeqs.set(channel, seqs); }
+  seqs.add(seq);
+  // LiteNetLib Ack: [0]=Ack, [1..2]=window start (0), [3]=channelId, [4..]=bitfield where
+  // bit i marks sequence (start+i) received. Window 64 -> 8 bytes. (Wrap past 63 is a TODO;
+  // the handshake uses sequences 0..1.)
+  const bits = Buffer.alloc(8);
+  for (const s of seqs) if (s >= 0 && s < 64) bits[s >> 3] |= 1 << (s & 7);
+  send(peer, new Writer().u8(P.Ack).u16(0).u8(channel).bytes(bits).build());
+}
+
+function onReassembledBatch(peer: Peer, channel: number, full: Buffer) {
+  // Validates our XXHash64 against the client's real BatchHash — a strong check that the
+  // hash impl + batch framing are correct before we build on them.
+  if (full.length >= 24 && full.readUInt16LE(0) === NGO_MAGIC) {
+    const want = full.readBigUInt64LE(8);
+    const got = xxhash64(full.subarray(24), 0);
+    log(`reassembled NGO batch ${full.length}B ch${channel}: xxhash64 ${got === want ? "MATCH ✓" : `MISMATCH got ${got.toString(16)} want ${want.toString(16)}`}`);
+  }
+  handleNgoDatagram(peer, full);
+}
+
+/** Send an NGO batch as a reliable (channeled) message, retransmitting a few times. */
+function sendReliable(peer: Peer, channel: number, batch: Buffer) {
+  const seq = peer.outSeq.get(channel) ?? 0;
+  peer.outSeq.set(channel, (seq + 1) & 0xffff);
+  // prop 0x01 = Channeled, connNum 0, not fragmented (our handshake messages fit one MTU).
+  const pkt = new Writer().u8(P.Channeled).u16(seq).u8(channel).bytes(batch).build();
+  send(peer, pkt);
+  let n = 0; // crude reliability: resend the same sequence (client dedupes) until likely acked
+  const t = setInterval(() => {
+    if (n++ >= 4 || !peers.has(peer.key)) { clearInterval(t); return; }
+    send(peer, pkt);
+  }, 250);
+  (t as unknown as { unref?: () => void }).unref?.();
 }
 
 function handleNgoDatagram(peer: Peer, body: Buffer) {
@@ -287,43 +347,58 @@ function handleNgoDatagram(peer: Peer, body: Buffer) {
 }
 
 function dispatchNgoMessage(peer: Peer, r: Reader): boolean {
-  // The message header framing (type index + length) needs the client's registered
-  // order from a live capture. Until then: recognise a ConnectionRequest by its
-  // embedded "AI" JSON (it carries the Tachyon payload) and approve.
-  const rest = r.buf.subarray(r.off);
-  const asText = rest.toString("latin1");
-  const aiMatch = asText.match(/"AI"\s*:\s*"(\d+)"/);
-  if (aiMatch && !peer.approved) {
-    approve(peer, aiMatch[1]);
-    r.off = r.buf.length; // consumed (single-message connect batch, the common case)
-    return false;
-  }
-  // NamedMessage (Dissonance). Try to frame it: u16 type | i32 len | packet.
-  if (r.remaining >= 6) {
-    const save = r.off;
-    const type = r.u16();
-    const len = r.u32();
-    if ((type === NM.DissonanceToServer) && len > 0 && len <= r.remaining) {
-      const packet = r.bytes(len);
-      onDissonanceToServer(peer, packet);
-      return true;
+  // Each batched message: bitpacked type index, bitpacked size, then that many body bytes.
+  if (r.remaining < 2) return false;
+  const typeIndex = unpackUint(r);
+  const size = unpackUint(r);
+  if (size > r.remaining) return false;
+  const body = r.bytes(size);
+
+  if (typeIndex === MSG.ConnectionRequest) {
+    const parsed = parseConnectionRequest(body);
+    if (parsed && !peer.approved) approve(peer, parsed.accountId, parsed.msgVersionsRaw);
+  } else if (typeIndex === MSG.NamedMessage) {
+    // u16 NamedMessageType | i32 length | <stock Dissonance packet>
+    const br = new Reader(body);
+    if (br.remaining >= 6) {
+      const nmType = br.u16();
+      const len = br.u32();
+      const packet = br.bytes(Math.min(len, br.remaining));
+      if (nmType === NM.DissonanceToServer) onDissonanceToServer(peer, packet);
     }
-    r.off = save;
+  } else if (VERBOSE) {
+    log("ngo msg idx", typeIndex, "size", size, "from", peer.accountId ?? peer.key);
   }
-  return false; // unknown framing — wait for capture to complete the parser
+  return true;
 }
 
-function approve(peer: Peer, accountId: string) {
+/** Parse ConnectionRequestMessage: MessageVersions (echoed back), ConfigHash, ConnectionData. */
+function parseConnectionRequest(body: Buffer): { msgVersionsRaw: Buffer; accountId: string } | null {
+  try {
+    const r = new Reader(body);
+    const start = r.off;
+    const n = unpackInt(r); // MessageVersions.Length (zigzag)
+    if (n < 0 || n > 64) return null;
+    for (let i = 0; i < n; i++) { r.u32(); unpackInt(r); } // u32 hash + zigzag version
+    const msgVersionsRaw = body.subarray(start, r.off); // echo verbatim in the approval
+    r.u64(); // ConfigHash (unused — the server never validates it)
+    const len = r.i32(); // ConnectionData length
+    const cd = r.bytes(Math.max(0, Math.min(len, r.remaining)));
+    const m = cd.toString("latin1").match(/"AI"\s*:\s*"(\d+)"/); // the only plaintext identity
+    return { msgVersionsRaw, accountId: m ? m[1] : "0" };
+  } catch { return null; }
+}
+
+function approve(peer: Peer, accountId: string, msgVersionsRaw: Buffer) {
   peer.accountId = accountId;
   peer.instance = instanceOf(accountId);
   peer.approved = true;
-  const payload = JSON.stringify({ DR: "Carrot" }); // KT omitted: client must be patched to not require a real key
-  const msg = buildConnectionApproved(peer.peerId, payload);
-  // Deliver reliably (channeled). TODO: proper channel/seq from capture.
-  const framed = ngoWriteBatch(1, msg);
-  const w = new Writer().u8(P.Channeled).u16(0).u8(0).bytes(framed);
-  send(peer, w.build());
-  log("approved account", accountId, "instance", peer.instance, "-> Carrot (peerId", peer.peerId + ")");
+  // KT omitted: the client must be patched to not require a real session key (stay plaintext).
+  const payload = JSON.stringify({ DR: "Carrot" });
+  const body = buildConnectionApproved(peer.peerId, payload, msgVersionsRaw);
+  const batch = ngoWriteBatch(1, ngoMessage(MSG.ConnectionApproved, body));
+  sendReliable(peer, RELIABLE_CHANNEL, batch);
+  log(`approved account ${accountId} instance ${peer.instance} -> Carrot (ownerClientId ${peer.peerId}, ${batch.length}B)`);
   broadcastRoster(peer, true);
 }
 
@@ -333,8 +408,9 @@ function onDissonanceToServer(peer: Peer, packet: Buffer) {
   if (!dissMagicOk(packet)) { if (VERBOSE) log("bad Dissonance magic from", peer.key); return; }
   const type = packet[2]; // stock: magic(2) then message type byte
   if (type === D.VoiceData) {
-    // Relay to everyone else in the instance, re-wrapped as DissonanceToClient.
-    const frame = buildNamedMessage(NM.DissonanceToClient, packet);
+    // Relay to everyone else in the instance, re-wrapped as a NamedMessage (index 3)
+    // carrying DissonanceToClient, in an NGO batch, sent unreliable (voice is loss-tolerant).
+    const frame = ngoMessage(MSG.NamedMessage, buildNamedMessage(NM.DissonanceToClient, packet));
     const batch = ngoWriteBatch(1, frame);
     const out = new Writer().u8(P.Unreliable).bytes(batch).build();
     for (const other of instancePeers(peer.instance, peer.accountId)) send(other, out);
@@ -376,6 +452,9 @@ sock.on("listening", () => {
   log(`routing file: ${ROUTING_FILE} (${Object.keys(routing).length} entries)`);
   log("waiting for a client — point VoiceConnectionInfo at this host:port (UWU_VOICE_ADDR on the edge)");
 });
+// A malformed packet must never take the server down mid-session — log and carry on.
+process.on("uncaughtException", (e) => log("uncaughtException:", (e as Error).stack ?? e));
+process.on("unhandledRejection", (e) => log("unhandledRejection:", e));
 sock.on("error", (e) => {
   log("socket error:", e.message);
   // A failed bind must be fatal — a lingering unbound process just produces a confusing
