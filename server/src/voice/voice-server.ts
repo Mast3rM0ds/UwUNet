@@ -29,6 +29,10 @@ const PROTOCOL_ID = Number(process.env.UWU_VOICE_PROTOCOL_ID ?? 13);
 const DATA_DIR = process.env.UWU_DATA_DIR ?? path.resolve(import.meta.dirname, "../../../data");
 const ROUTING_FILE = path.join(DATA_DIR, "voice-routing.json"); // account -> instance, written by the edge
 const VERBOSE = process.env.UWU_VOICE_VERBOSE === "1";
+// Capture mode: log the first N non-ping inbound packets with full hex regardless of
+// VERBOSE, so a live run reveals the post-accept NGO traffic (the ConnectionRequest that
+// carries the Tachyon JSON). Set UWU_VOICE_CAPTURE=0 to silence once layer 3 is built.
+let captureBudget = Number(process.env.UWU_VOICE_CAPTURE ?? 80);
 
 const now = () => new Date().toISOString().slice(11, 23);
 const log = (...a: unknown[]) => console.log(now(), ...a);
@@ -191,6 +195,11 @@ sock.on("message", (raw, rinfo) => {
   const peer = peers.get(key);
   if (peer) peer.lastSeen = Date.now();
 
+  if (captureBudget > 0 && prop !== P.Ping && prop !== P.Pong && prop !== P.Ack) {
+    captureBudget--;
+    log("rx", propName(prop), "from", key, "len", inner.length, "|", hex(inner, 96));
+  }
+
   switch (prop) {
     case P.ConnectRequest:
       handleConnectRequest(inner, rinfo, key);
@@ -218,12 +227,17 @@ function handleConnectRequest(inner: Buffer, rinfo: dgram.RemoteInfo, key: strin
   // and was not readable statically. Log it so one live connect locks the format.
   log("ConnectRequest from", key, "len", inner.length);
   log("  raw:", hex(inner, 64));
-  // Best-effort stock parse (recent LiteNetLib): [0]=prop, [1..4]=protocolId,
-  // [5..12]=connectionTime(i64), [13]=addrSize, [14..]=addr, then connectData.
-  const r = new Reader(inner, 1);
-  const protocolId = r.remaining >= 4 ? r.u32() : -1;
-  const connectionTime = r.remaining >= 8 ? r.u64() : 0n;
-  log(`  parsed protocolId=${protocolId} connectionTime=${connectionTime} (expecting ProtocolId=${PROTOCOL_ID})`);
+  // Stock LiteNetLib NetConnectRequestPacket, confirmed from a live capture 2026-10-28:
+  //   [1..4] protocolId i32 (=13) · [5..12] connectionTime i64 · [13..16] localPeerId i32 ·
+  //   [17] addrSize (16 IPv4 / 28 IPv6) · [18..] target SocketAddress · then connectData.
+  // The Tachyon JSON does NOT ride here — connectData is "01 00"; the handshake payload
+  // arrives as a later NGO message over the connection.
+  const protocolId = inner.length >= 5 ? inner.readUInt32LE(1) : -1;
+  const connectionTime = inner.length >= 13 ? inner.readBigUInt64LE(5) : 0n;
+  const localPeerId = inner.length >= 17 ? inner.readInt32LE(13) : 0;
+  const addrSize = inner.length >= 18 ? inner[17] : 0;
+  const connectData = inner.length >= 18 + addrSize ? inner.subarray(18 + addrSize) : Buffer.alloc(0);
+  log(`  protocolId=${protocolId} connTime=${connectionTime} localPeerId=${localPeerId} addrSize=${addrSize} connectData=${connectData.toString("hex")} (expect ProtocolId=${PROTOCOL_ID})`);
   if (protocolId !== PROTOCOL_ID) {
     log(`  ⚠ protocolId mismatch — set UWU_VOICE_PROTOCOL_ID=${protocolId} and restart to accept this client`);
     // Still proceed to accept using the client's own time, so we can observe the next layer.
@@ -362,6 +376,14 @@ sock.on("listening", () => {
   log(`routing file: ${ROUTING_FILE} (${Object.keys(routing).length} entries)`);
   log("waiting for a client — point VoiceConnectionInfo at this host:port (UWU_VOICE_ADDR on the edge)");
 });
-sock.on("error", (e) => { log("socket error:", e.message); });
+sock.on("error", (e) => {
+  log("socket error:", e.message);
+  // A failed bind must be fatal — a lingering unbound process just produces a confusing
+  // half-blind log (EADDRINUSE means another voice server already holds the port).
+  if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") {
+    log(`port ${VOICE_PORT} already in use — another voice server is running. Exiting.`);
+    process.exit(1);
+  }
+});
 process.on("SIGTERM", () => { log("SIGTERM — shutting down"); sock.close(() => process.exit(0)); });
 sock.bind(VOICE_PORT);

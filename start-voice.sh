@@ -16,6 +16,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 VOICE_PORT="${VOICE_PORT:-8470}"
 export VOICE_PORT
+# Stop any previous instance first, or the new one hits EADDRINUSE and the log goes
+# half-blind (two processes racing for the port).
+if [ -f voice.pid ]; then kill "$(cat voice.pid)" 2>/dev/null || true; rm -f voice.pid; fi
+pkill -f '[v]oice-server.ts' 2>/dev/null || true
+sleep 1
 echo "[i] starting UwUNet voice server on UDP :$VOICE_PORT"
 nohup node server/src/voice/voice-server.ts > voice.log 2>&1 &
 echo $! > voice.pid
