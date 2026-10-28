@@ -513,15 +513,17 @@ if (rroOwnerId !== null) {
   console.log(`[uwunet] RRO owner "${RRO_OWNER_NAME}" not found in DB — RROs keep original ownership (set UWU_RRO_OWNER or UWU_RRO_OWNER_ID)`);
 }
 // An RRO's first subroom, as matchmaking needs it (scene = the baked UnitySceneId).
+// Ids stay STRINGS end to end: ported room/subroom ids exceed 2^53 and Number round-trips
+// corrupt them.
 const rroSubRoom = (
-  id: number,
-): { subRoomId: number; scene: string; name: string; maxCapacity: number } | undefined => {
+  id: number | string,
+): { subRoomId: string; scene: string; name: string; maxCapacity: number } | undefined => {
   const dto = rroRoomById(id);
   if (!dto) return undefined;
   const sr = ((Array.isArray(dto.SubRooms) ? (dto.SubRooms as Record<string, unknown>[])[0] : undefined) ??
     {}) as Record<string, unknown>;
   return {
-    subRoomId: typeof sr.SubRoomId === "number" ? (sr.SubRoomId as number) : 1,
+    subRoomId: sr.SubRoomId !== undefined ? String(sr.SubRoomId) : "1",
     scene: typeof sr.UnitySceneId === "string" ? (sr.UnitySceneId as string) : "",
     name: typeof dto.Name === "string" ? (dto.Name as string) : `Room${id}`,
     maxCapacity: typeof sr.MaxPlayers === "number" ? (sr.MaxPlayers as number) : 16,
@@ -530,12 +532,12 @@ const rroSubRoom = (
 // A first-party subroom's published save (CurrentSave), by room + subroom id. Only the RROs
 // with a baked interactive save carry one (MakeItToMidnight et al.); the other 24 are null.
 const rroSubRoomSave = (
-  roomId: number,
-  subRoomId: number,
+  roomId: number | string,
+  subRoomId: number | string,
 ): Record<string, unknown> | undefined => {
   const dto = rroRoomById(roomId);
   if (!dto || !Array.isArray(dto.SubRooms)) return undefined;
-  const sr = (dto.SubRooms as Record<string, unknown>[]).find((s) => Number(s.SubRoomId) === subRoomId);
+  const sr = (dto.SubRooms as Record<string, unknown>[]).find((s) => String(s.SubRoomId) === String(subRoomId));
   const save = sr?.CurrentSave;
   return save && typeof save === "object" ? (save as Record<string, unknown>) : undefined;
 };
@@ -931,11 +933,16 @@ const ORIENTATION_SCENE = "c79709d8-a31b-48aa-9eb8-cc31ba9505e8"; // room 13 Sub
 // disagreed with the -2 presence and stalled the scene load.
 const orientationRoomDto = () => orientationRoomStatic;
 // Room-by-id lookup: Orientation (13) -> the tuned Orientation DTO; any other RRO / the Rec
-// Center -> its real DTO; everything else is a player dorm.
-const roomDtoFor = (id: number) =>
-  id === ORIENTATION_ROOM_ID
-    ? orientationRoomDto()
-    : rroRoomById(id) ?? dormRoomDto(id, userById(id)?.Username ?? `Player${id}`);
+// Center -> its real DTO; everything else is a player dorm. `id` may be a STRING: ported room
+// ids exceed 2^53 and a Number round-trip would corrupt them (649924194922273060 → ...280).
+const roomDtoFor = (id: number | string): Record<string, unknown> => {
+  const s = String(id);
+  const n = Number(s);
+  if (Number.isSafeInteger(n) && n === ORIENTATION_ROOM_ID) return orientationRoomDto();
+  return rroRoomById(s) ?? (Number.isSafeInteger(n)
+    ? dormRoomDto(n, userById(n)?.Username ?? `Player${n}`)
+    : ({ ...roomTemplate, RoomId: s, Name: `Room ${s}` } as Record<string, unknown>));
+};
 const orientationRoomInstance = () => {
   let region = "usw";
   try {
@@ -1215,13 +1222,18 @@ route("POST", "/roominstance/**/reportjoinresult", (c) => c.empty());
 // stable per room and differs from the caller's dorm instance (their account id), which is
 // what the client keys a room transition off.
 const PUBLIC_INSTANCE_BASE = 500000;
-const publicRoomInstance = (roomId: number, subRoomId?: number) => {
+const publicRoomInstance = (roomId: number | string, subRoomId?: number | string) => {
   const sr = rroSubRoom(roomId);
   const sub = subRoomId ?? sr?.subRoomId ?? 1;
   const region = photonRegion();
+  // Phaser: a stable numeric instance id derived from the (possibly 64-bit) room id — the
+  // big ids round in a float, so modulo them into a safe range instead.
+  const instBase = Number(
+    (BigInt(String(roomId)) % 9000000000n) + PUBLIC_INSTANCE_BASE,
+  );
   return {
-    roomInstanceId: PUBLIC_INSTANCE_BASE + roomId,
-    roomId,
+    roomInstanceId: instBase,
+    roomId: String(roomId),
     subRoomId: sub,
     roomInstanceType: 0, // Public
     location: sr?.scene ?? "",
@@ -1268,12 +1280,14 @@ const sendMatchmake = (c: Ctx, errorCode: number, roomInstance: Record<string, u
   }
 };
 // POST /matchmake/room/{roomId}[/{subRoomId}] (+ the v2 spelling): enter an RRO / the Rec Center.
+// Room ids are kept as STRINGS through the lookup: ported ids exceed 2^53 and Number-parsing
+// them rounds them (649924194922273060 → ...280) — rroRoomById(String) would 404 the room.
 const roomMatchmake = (c: Ctx) => {
   if (!c.authUser) return c.send(401, {});
   const m = /\/room\/(\d+)(?:\/(\d+))?$/.exec(c.path);
   if (!m) return sendMatchmake(c, 2, null); // 2 = couldn't resolve
-  const roomId = Number.parseInt(m[1], 10);
-  const subRoomId = m[2] ? Number.parseInt(m[2], 10) : undefined;
+  const roomId = m[1];
+  const subRoomId = m[2];
   if (!rroRoomById(roomId)) return sendMatchmake(c, 2, null); // not a room we serve
   const inst = publicRoomInstance(roomId, subRoomId);
   presenceById.set(selfPlayerId(c), inst); // the heartbeat now agrees the player is here
@@ -1398,16 +1412,25 @@ route("GET", "/rooms", (c) => {
   }
   c.send(200, null); // neither id nor name resolvable
 });
-// GET /rooms/bulk — rooms by id (?id= repeated and/or comma-separated). Returns a RoomDto
-// array (missing ids omitted). MUST be registered before /rooms/** or that catch-all 404s it
-// with "no such room" — which the BootSequence surfaces as the fatal "No such room". Every
-// room we know is a dorm, so return a dorm DTO per requested id.
+// GET /rooms/bulk — rooms by id (?id= repeated and/or comma-separated) or by name
+// (?name= — the door-link resolver path). Returns a RoomDto array (missing ids omitted).
+// MUST be registered before /rooms/** or that catch-all 404s it with "no such room" — which
+// the BootSequence surfaces as the fatal "No such room". Every room we know is a dorm, so
+// return a dorm DTO per requested id.
 route("GET", "/rooms/bulk", (c) => {
-  const ids = [...c.query.getAll("id")]
+  const rawIds = [...c.query.getAll("id")]
     .flatMap((v) => v.split(","))
-    .map((s) => Number.parseInt(s.trim(), 10))
-    .filter((n) => !Number.isNaN(n));
-  c.send(200, ids.map((rid) => roomDtoFor(rid)));
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s));
+  // The door/room-link resolver asks bulk by NAME (the reference lists ?name= as a legal
+  // bulk param). An empty array here is the client's "room doesn't exist".
+  const nameParam = c.query.get("name");
+  if (!rawIds.length && nameParam) {
+    const id = rroRoomIdByName(nameParam.toLowerCase());
+    c.send(200, id === undefined ? [] : [roomDtoFor(id)]);
+    return;
+  }
+  c.send(200, rawIds.map((rid) => roomDtoFor(rid)));
 });
 // Per-room, per-player saved data (the blob @'YourRoom' machines store). GET must NEVER 404:
 // the reference's own docs — "A player who has never saved any — or an unknown room — gets an EMPTY
@@ -2054,7 +2077,7 @@ route("GET", "/rooms/{roomId}/subrooms/{subRoomId}/saves/{saveId}", (c) => {
   if (!c.authUser) return c.send(401, {});
   const m = /^\/rooms\/(\d+)\/subrooms\/(\d+)\/saves\/(\d+)$/.exec(c.path);
   if (!m) return c.send(404, { Code: 404, Error: "no such save" });
-  const save = rroSubRoomSave(Number.parseInt(m[1], 10), Number.parseInt(m[2], 10));
+  const save = rroSubRoomSave(m[1], m[2]);
   if (!save || Number(save.SubRoomDataSaveId) !== Number.parseInt(m[3], 10)) {
     return c.send(404, { Code: 404, Error: "no such save" });
   }
