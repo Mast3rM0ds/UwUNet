@@ -2869,6 +2869,15 @@ route("GET", "/Accounts/account/me", (c) => {
   return c.send(200, accountJson(u));
 });
 
+// accounts.rec.net "/account/search?name=" — the social tab's player search. Exact-match on
+// Username or DisplayName (a fuzzy LIKE would match everything with no ranking to order by).
+route("GET", "/account/search", (c) => {
+  const q = (c.query.get("name") ?? c.query.get("query") ?? "").toLowerCase();
+  const out = Object.values(db.users)
+    .filter((u) => String(u.Username).toLowerCase() === q || String(u.DisplayName).toLowerCase() === q)
+    .map(accountJson);
+  return c.send(200, out);
+});
 route("GET", "/Accounts/account/bulk", (c) => {
   const ids = [...c.query.getAll("id"), ...c.query.getAll("ids")];
   const out = Object.values(db.users)
