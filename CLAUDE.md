@@ -173,3 +173,14 @@ reversible by unsetting `UWU_VOICE_ADDR` and restarting the edge.
 - Fixtures/static are read **fresh per request** → image/JSON changes need only `git pull` on
   the VPS (no edge restart). **Code** changes to `uwunet-edge.ts` need a restart.
 - recflare reference: `gh api repos/recflare/server/contents/<path> --jq .content | base64 -d`.
+
+### Restarting the edge (local or VPS)
+- NEVER restart the local edge with inline `pgrep`/`pkill`/`setsid` chains — they match the
+  calling shell (SIGTERM kills the wrapper, not the edge) or the fresh start dies with it
+  (this left the edge dead twice: client showed "error code summer").
+- Use `/tmp/opencode/edgeup.sh` to start it locally (env TLS_PORT=8443 HTTP_PORT=8460
+  UWU_SPAWN=dorm), and stop it with `pkill -f '[u]wunet-edge.ts'` (bracket trick).
+- Forwarding layer awareness: `run.sh` (no `EDGE_EXTERNAL`) socats local 8443/8460 → VPS;
+  the local edge and that socat cannot bind the same port. When testing against the VPS,
+  leave the local edge STOPPED. Verify the chain with:
+  `curl -sk -H 'Host: ns.rec.net' https://127.0.0.1:8443/` + check the VPS harvest log grew.
