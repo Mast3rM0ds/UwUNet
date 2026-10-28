@@ -556,15 +556,24 @@ const subRoomSaveDetail = (
       UnityAsset: (a.Filename as string) ?? (a.UnityAsset as string) ?? null,
       UnityAssetHash: (a.Hash as string) ?? (a.UnityAssetHash as string) ?? null,
     }));
+  const mainAsset = (save.UnityAsset as string) ?? null;
+  // A save that names a Unity asset (UnityAssetId) the client must load as an asset bundle, yet
+  // for which we serve NO bundle (no main UnityAsset, no UnitySubAssets), is an impossible state
+  // the live service never sent: the client tries to resolve that asset, finds none, and aborts
+  // the room load (error 8715) BEFORE it ever downloads the scene DataBlob. Our first-party saves
+  // are maker-pen content carried entirely by DataBlob on the baked UnitySceneId, so when we can't
+  // back the asset we don't advertise it — null the id (key stays, matching the reference's
+  // maker-pen shape) so the client loads the baked scene + DataBlob only.
+  const assetBacked = subAssets.length > 0 || mainAsset !== null;
   return {
     UnitySubAssets: subAssets,
     ReferencedUnityAssets: [],
-    UnityAsset: (save.UnityAsset as string) ?? null,
+    UnityAsset: mainAsset,
     UnityAssetHash: (save.UnityAssetHash as string) ?? null,
     SubRoomDataSaveId: Number(save.SubRoomDataSaveId) || 0,
     SubRoomId: Number(save.SubRoomId) || 0,
-    UnityAssetId: (save.UnityAssetId as string) ?? null,
-    ReferencedUnityAssetIds: Array.isArray(save.ReferencedUnityAssetIds) ? save.ReferencedUnityAssetIds : [],
+    UnityAssetId: assetBacked ? ((save.UnityAssetId as string) ?? null) : null,
+    ReferencedUnityAssetIds: assetBacked && Array.isArray(save.ReferencedUnityAssetIds) ? save.ReferencedUnityAssetIds : [],
     DataBlob: (save.DataBlob as string) ?? null,
     DataBlobHash: (save.DataBlobHash as string) ?? null,
     PersistenceVersion: Number(save.PersistenceVersion) || 0,
