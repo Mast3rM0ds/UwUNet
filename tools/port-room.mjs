@@ -242,8 +242,11 @@ async function fetchImage(imageName) {
 
 // ---------- step 6+7: register ----------
 function readJson(p, fallback) {
+  // Plain JSON.parse would float-round raw 64-bit digit literal values
+  // (649924194922273060 -> ...000). Wrap them in sentinels first, like the edge does.
   try {
-    return JSON.parse(readFileSync(p, "utf8"));
+    const txt = readFileSync(p, "utf8").replace(/("(?:RoomId|SubRoomId|SubRoomDataSaveId)":\s*)(\d{16,})/g, '$1"__BIG__$2__"');
+    return JSON.parse(txt);
   } catch {
     return fallback;
   }
@@ -359,6 +362,11 @@ async function port(name) {
   // older snapshots lack fields the client's DTO parser expects; fill them like the modern ones
   if (dto.IsPlacePlay === undefined) dto.IsPlacePlay = false;
   for (const sr of dto.SubRooms ?? []) if (sr.DataSavedAt === undefined) sr.DataSavedAt = null;
+  // The client signature-checks load-screen images ("?sig=p1" -> "Signature missing" ->
+  // error 8715 kicked to dorm), and our fixture CDN can't forge rec.net signatures — drop
+  // the load screens entirely; rooms join without them.
+  dto.LoadScreens = [];
+  dto.PromoImages = [];
   rro.rooms[String(dto.RoomId)] = dto;
   rro.byName[dto.Name.toLowerCase()] = toRawNumberSafe(dto.RoomId);
   dumpLossless(rro, rroPath);

@@ -3345,13 +3345,7 @@
    ],
    "PromoImages": [],
    "PromoExternalContent": [],
-   "LoadScreens": [
-    {
-     "ImageName": "0up5acm6gft8gsrqq2zsuc07z.jpg",
-     "Title": "The Black Cat",
-     "Subtitle": "Welcome to the most popular hangout world in VRChat and Rec Room!"
-    }
-   ],
+   "LoadScreens": [],
    "Roles": [],
    "Badges": [],
    "BoostCount": 0,
@@ -3362,7 +3356,7 @@
    "IsPlacePlay": false
   },
   "649924194922273060": {
-   "RoomId": 649924194922273000,
+   "RoomId": 649924194922273060,
    "Name": "RuinsOfStonefall",
    "Description": "OST by Angle: https://bit.ly/RoS-OST\n\nYou and your friend make your way through a hidden temple. Danger lurks around every corner! Master the elemental powers of the Summer and Winter Solstices, fight unique enemies, and use your spells to solve puzzles to conquer the challenges in this brand new, original quest by Ink Overflow.\n\ninkoverflow.com",
    "ImageName": "6fd2dbywr67jljjwaipidk83c.jpg",
@@ -3422,14 +3416,14 @@
    "RankedEntityId": "649924194922273060",
    "SubRooms": [
     {
-     "SubRoomId": 702996776564243000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 702996776564242998,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Home",
      "CurrentSave": {
       "SubRoomDataSaveId": 199381626,
-      "SubRoomId": 702996776564243000,
+      "SubRoomId": 702996776564242998,
       "DataBlob": "5gee8lj2tjya3b0e6n79mhw14.room",
       "DataBlobHash": "RJvXVWL3P9rA3A+FL4JGLyv+kSxR+sv3GYfcwr40Nzs=",
       "ReferencedUnityAssetIds": [],
@@ -3453,14 +3447,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 3645871027025233400,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 3645871027025233580,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "CircuitTest",
      "CurrentSave": {
       "SubRoomDataSaveId": 97831983,
-      "SubRoomId": 3645871027025233400,
+      "SubRoomId": 3645871027025233580,
       "DataBlob": "5wqkkhuay5h949iq0qfl5ohlo.room",
       "DataBlobHash": "x8fm7YhDOumF04W8VAjLBpCBieNqMXHvjK4WVr+WHss=",
       "ReferencedUnityAssetIds": [],
@@ -3484,14 +3478,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 3831688941239127000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 3831688941239127250,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Assets",
      "CurrentSave": {
       "SubRoomDataSaveId": 97370607,
-      "SubRoomId": 3831688941239127000,
+      "SubRoomId": 3831688941239127250,
       "DataBlob": "exr8cq0emikytz4qurt3ovekl.room",
       "DataBlobHash": "hBZiWQiMuRyVpH3pUCjKhXgUPfiSwZ/nvvQX2IP5ECg=",
       "ReferencedUnityAssetIds": [],
@@ -3515,14 +3509,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 6613400375707104000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 6613400375707104007,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.2Bestow",
      "CurrentSave": {
       "SubRoomDataSaveId": 97911519,
-      "SubRoomId": 6613400375707104000,
+      "SubRoomId": 6613400375707104007,
       "DataBlob": "ble4rt6iztc7wbw3fh3kjtjz3.room",
       "DataBlobHash": "0deEvjCwVFuyHDMt7/nfYeOzGjmYmsS6cAPN7LfMQjQ=",
       "ReferencedUnityAssetIds": [],
@@ -3546,14 +3540,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 1636828870705264600,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 1636828870705264677,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.1Intro",
      "CurrentSave": {
       "SubRoomDataSaveId": 97911966,
-      "SubRoomId": 1636828870705264600,
+      "SubRoomId": 1636828870705264677,
       "DataBlob": "d7padm7kbwluv0s7jv54d76cw.room",
       "DataBlobHash": "POYrzY10jMFFF1ljFUx7OFj+bG7YT/+OGdIUUA+zpMM=",
       "ReferencedUnityAssetIds": [],
@@ -3577,14 +3571,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 5392483721673368000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 5392483721673367122,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Credits",
      "CurrentSave": {
       "SubRoomDataSaveId": 198695383,
-      "SubRoomId": 5392483721673368000,
+      "SubRoomId": 5392483721673367122,
       "DataBlob": "52zqso5fe52y9ofetv27067k0.room",
       "DataBlobHash": "hsPw1KgDOvtpgTrYfU9HeqHOEp+Ghdt8CHv3/7mqXYs=",
       "ReferencedUnityAssetIds": [],
@@ -3608,14 +3602,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 7657616995188776000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 7657616995188775979,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.3Tutorial",
      "CurrentSave": {
       "SubRoomDataSaveId": 99270816,
-      "SubRoomId": 7657616995188776000,
+      "SubRoomId": 7657616995188775979,
       "DataBlob": "47isdkgq9fyurhpxflxq3ouz6.room",
       "DataBlobHash": "kfqpFrQlpYU5dIs1+431ji72TAN3gVv7nxHf9FlpUE0=",
       "ReferencedUnityAssetIds": [],
@@ -3639,14 +3633,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 2221616191494563300,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 2221616191494563332,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.8Deius",
      "CurrentSave": {
       "SubRoomDataSaveId": 99903380,
-      "SubRoomId": 2221616191494563300,
+      "SubRoomId": 2221616191494563332,
       "DataBlob": "87uf7bje8gs9q51qnvxe511rp.room",
       "DataBlobHash": "u0PTTXXc+XPrtdD0gVFqWpSlv/nf46Ip/iNRMjD+IuQ=",
       "ReferencedUnityAssetIds": [],
@@ -3670,14 +3664,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 3172619066160981500,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 3172619066160981663,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.5Guardian",
      "CurrentSave": {
       "SubRoomDataSaveId": 99933736,
-      "SubRoomId": 3172619066160981500,
+      "SubRoomId": 3172619066160981663,
       "DataBlob": "91usndrw0j7vo9486tt2920kz.room",
       "DataBlobHash": "MqieYDq+MhFRjDqhfXPxBin9pGU6alO5T/HUUTPyOy8=",
       "ReferencedUnityAssetIds": [],
@@ -3701,14 +3695,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 5545278144673851000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 5545278144673851349,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.4Mook",
      "CurrentSave": {
       "SubRoomDataSaveId": 125505321,
-      "SubRoomId": 5545278144673851000,
+      "SubRoomId": 5545278144673851349,
       "DataBlob": "3rls5d6z4kkpyocau79a41949.room",
       "DataBlobHash": "GsOzEG03ysroZHISJ35HpFSXSjyq7b5Y1zwVBzZ0ERc=",
       "ReferencedUnityAssetIds": [],
@@ -3732,14 +3726,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 2112620519916978400,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 2112620519916978520,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "RoomPhoto",
      "CurrentSave": {
       "SubRoomDataSaveId": 97692215,
-      "SubRoomId": 2112620519916978400,
+      "SubRoomId": 2112620519916978520,
       "DataBlob": "askzn9cbr9lue5isvm0jz2k8l.room",
       "DataBlobHash": "yA9U1Y0AfTFKMGPGHXDHcQwlZjI7QABMOv1XgoC7Pdc=",
       "ReferencedUnityAssetIds": [],
@@ -3763,14 +3757,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 3458803720576366000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 3458803720576366274,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "CreditsShowcase",
      "CurrentSave": {
       "SubRoomDataSaveId": 121131448,
-      "SubRoomId": 3458803720576366000,
+      "SubRoomId": 3458803720576366274,
       "DataBlob": "38nqzgk3om1s59wu5pzn4etzf.room",
       "DataBlobHash": "eHIpI0p4AUa5qss+dqm6pdfiq/7A8QX2joqbog2d7wk=",
       "ReferencedUnityAssetIds": [],
@@ -3794,14 +3788,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 3550148070150630400,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 3550148070150630311,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.6Tutorial2",
      "CurrentSave": {
       "SubRoomDataSaveId": 99933821,
-      "SubRoomId": 3550148070150630400,
+      "SubRoomId": 3550148070150630311,
       "DataBlob": "bkfk3px2su57osyrx5rxu1gnw.room",
       "DataBlobHash": "Iqri8przuzvkNpz16UyjbuJfk9t68WZDryhACLnk8NQ=",
       "ReferencedUnityAssetIds": [],
@@ -3825,14 +3819,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 2955823362899004000,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 2955823362899004141,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "Pt.7Sorcerer",
      "CurrentSave": {
       "SubRoomDataSaveId": 99933986,
-      "SubRoomId": 2955823362899004000,
+      "SubRoomId": 2955823362899004141,
       "DataBlob": "8t32wafgu2xawjje9o7hwojf2.room",
       "DataBlobHash": "X2Ue7sp5XAKgG2MH0RPW1+Xjenh9REY0rogzjz00u9E=",
       "ReferencedUnityAssetIds": [],
@@ -3856,14 +3850,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 763143879459122800,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 763143879459122802,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "LevelSelect",
      "CurrentSave": {
       "SubRoomDataSaveId": 97900341,
-      "SubRoomId": 763143879459122800,
+      "SubRoomId": 763143879459122802,
       "DataBlob": "39c72k7yrr3rm3ufarha8b66z.room",
       "DataBlobHash": "cJJvGoe4Al/DhnWQvFLojFP6lIrhgmnkAVLZWX7yfSQ=",
       "ReferencedUnityAssetIds": [],
@@ -3887,14 +3881,14 @@
      "DataSavedAt": null
     },
     {
-     "SubRoomId": 1247889544518329300,
-     "RoomId": 649924194922273000,
+     "SubRoomId": 1247889544518329379,
+     "RoomId": 649924194922273060,
      "CreatorAccountId": null,
      "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
      "Name": "EarlyCredits",
      "CurrentSave": {
       "SubRoomDataSaveId": 102400253,
-      "SubRoomId": 1247889544518329300,
+      "SubRoomId": 1247889544518329379,
       "DataBlob": "e3w1i7xja3j7h94fid4sifzqt.room",
       "DataBlobHash": "lkTPaA40+aRmbDDE3qrMR/01dgZOfiZiBlbDEMVQBKs=",
       "ReferencedUnityAssetIds": [],
@@ -3948,35 +3942,14 @@
      "Type": 2
     }
    ],
-   "PromoImages": [
-    "e8m45e43vfaq3o3xv0rembddc.jpg",
-    "caiwjueczt4btkuakh4vk0qh6.jpg",
-    "79ca7v9xbhcj0iv3lwpjxl3d2.jpg",
-    "2gkclpc3pahw0kz11v4bml2us.jpg",
-    "6em8l93a33xcu47d2iwcazjev.jpg",
-    "29zc2q8q93lysggbfrinm9u7q.jpg",
-    "a9fa9xev40lrvsmcpyq5hagm1.jpg",
-    "7hy3p0nxv4hte05javl32mztp.jpg",
-    "3l31cyaaqi1il3hqk0x12xnsv.jpg",
-    "d0paengumv57cdw699wotfsib.jpg",
-    "96hdfxqpvm0amn4xfs3cio7iy.jpg",
-    "0nu20o79ifcx3erhb3p92v7mf.jpg",
-    "77njnhc16pbg8ydzfi3k2okqq.jpg",
-    "0j5ie0p4xwubiibt57pd6gihh.jpg"
-   ],
+   "PromoImages": [],
    "PromoExternalContent": [
     {
      "Type": 0,
      "Reference": "PErpiHrAPsM"
     }
    ],
-   "LoadScreens": [
-    {
-     "ImageName": "1z2g7szitirbn8g8ptdihjgpc.jpg",
-     "Title": "Welcome Adventurers!",
-     "Subtitle": "Prepare for a quest you'll never forget...assuming you make it out alive"
-    }
-   ],
+   "LoadScreens": [],
    "Roles": [],
    "Badges": [],
    "BoostCount": 0,
