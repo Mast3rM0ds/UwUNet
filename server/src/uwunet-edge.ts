@@ -2627,6 +2627,24 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
     }
   }
 
+  // Image requests with no specific fixture: the real img.rec.net CDN is dead, so a custom
+  // room shot, another player's profile photo, or a thumbnail we haven't provided would 404
+  // and leave a broken/blank tile in the menus. Serve a neutral placeholder instead — a real
+  // image always beats a 404 here (same reasoning as the dead-endpoint discipline).
+  if (req.method === "GET" || req.method === "HEAD") {
+    if (/\.(jpe?g|png|webp|gif)$/i.test(p)) {
+      const ph = path.join(HERE, "fixtures", "_placeholder.jpg");
+      if (existsSync(ph)) {
+        res.setHeader("content-type", "image/jpeg");
+        res.setHeader("x-uwunet", "placeholder");
+        res.writeHead(200);
+        res.end(req.method === "HEAD" ? undefined : readFileSync(ph));
+        log({ event: "placeholder-image", host: req.headers.host, path: p });
+        return;
+      }
+    }
+  }
+
   // HEAD on any path the client probes for reachability: 200, empty.
   if (req.method === "HEAD") {
     res.writeHead(200);
