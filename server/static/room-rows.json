@@ -65,17 +65,6 @@
   ]
  },
  "playlists": {
-  "7732248245192312892": {
-   "Name": "Fun with Friends",
-   "ItemIds": [
-    2,
-    3,
-    8,
-    17,
-    39,
-    22
-   ]
-  },
   "17859346": {
    "Name": "Roleplay",
    "ItemIds": []
@@ -136,6 +125,17 @@
    "Name": "Horror",
    "ItemIds": [
     20930
+   ]
+  },
+  "7732248245192312892": {
+   "Name": "Fun with Friends",
+   "ItemIds": [
+    2,
+    3,
+    8,
+    17,
+    39,
+    22
    ]
   }
  }
