@@ -7,9 +7,10 @@
 # EDGE (start-server.sh / its env), e.g. UWU_VOICE_ADDR=51.38.36.86:8470. Until the
 # server completes the handshake for real, leave that UNSET so room entry is safe.
 #
-# On the VPS the voice UDP port must be reachable from players. pf currently redirects
-# TCP 443->8443 / 80->8460; add a UDP pass/rdr for the voice port (default 8470) and
-# open it in the OVH firewall.
+# On the VPS the voice UDP port must be reachable from players. The voice server binds
+# UDP 8470 directly (no redirect needed). Merge the pf pass rule from
+# scripts/pf-voice.conf into /etc/pf.conf and reload — see that file for the exact,
+# non-destructive apply steps and the OVH firewall note.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
