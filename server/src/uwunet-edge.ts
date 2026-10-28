@@ -1439,6 +1439,42 @@ route("PUT", "/api/players/v1/playerPhotoTaggingSetting", (c) => {
 });
 // Named-image catalog (the reference apps/api routes/images.ts "/api/images/v2/named").
 route("GET", "/api/images/v2/named", (c) => c.send(200, []));
+
+// Objective progress reports (the reference econ.app.ts "/api/objectives/v1/updateobjective").
+// No objectives store — echo the Group back as camelCase `group`, never completed, so the
+// client gets a well-formed body. The client POSTs this constantly; a 404 is a retry storm
+// (seen 1181x in one session's harvest).
+route("POST", "/api/objectives/v1/updateobjective", (c) => {
+  let group = 0;
+  try { const b = c.body ? JSON.parse(c.body) : null; group = Number((b as Record<string, unknown>)?.Group) || 0; } catch { /* */ }
+  c.send(200, { group, isCompleted: false, clearedAt: new Date().toISOString() });
+});
+// Text purity / sanitization gates (the reference gameplay.ts "/api/sanitize/*"): the client
+// checks a display name / room name / invention title before accepting it. We don't filter —
+// `isPure` says clean, and the sanitizer returns the text untouched (a bare JSON string).
+route("POST", "/api/sanitize/v1/isPure", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { IsPure: true });
+});
+route("POST", "/api/sanitize/v1", (c) => {
+  let value = "";
+  try { const b = c.body ? JSON.parse(c.body) : null; value = String((b as Record<string, unknown>)?.Value ?? ""); } catch { /* */ }
+  c.send(200, value);
+});
+// Caller's role check before the Maker Pen opens (the reference rooms.ts "/api/rooms/v1/
+// verifyRole"): a bare boolean. Our god/creator model grants build everywhere, so an authed
+// caller always holds the role.
+const verifyRole = (c: Ctx) => c.send(200, Boolean(c.authUser));
+route("POST", "/api/rooms/v1/verifyRole", verifyRole);
+route("GET", "/api/rooms/v1/verifyRole", verifyRole);
+// Push-notification category toggles (the reference platformnotifications.app.ts
+// "/config/categories"): a { Results, TotalResults } PAGE of PascalCase categories. One
+// muteable "Friends" category — we send no notifications yet, so it's a stub.
+route("GET", "/config/categories", (c) =>
+  c.send(200, {
+    Results: [{ CategoryId: 2, Importance: 0, Name: "Friends", Description: "Friend requests and friend activity", IsMuteable: true }],
+    TotalResults: 1,
+  }));
 // Who may DM the caller / add them to a group chat: enum by NUMBER (0 Friends·1
 // Favorites·2 NoOne), keyed by the TOKEN's player id, defaulting to Friends for both —
 // exactly what a player who never set them reads (the reference apps/chat chat.app.ts).
