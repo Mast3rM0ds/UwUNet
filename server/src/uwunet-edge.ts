@@ -1264,11 +1264,10 @@ const publicRoomInstance = (roomId: number | string, subRoomId?: number | string
   const sr = rroSubRoom(roomId);
   const sub = subRoomId ?? sr?.subRoomId ?? 1;
   const region = photonRegion();
-  // Phaser: a stable numeric instance id derived from the (possibly 64-bit) room id — the
-  // big ids round in a float, so modulo them into a safe range instead.
-  const instBase = Number(
-    (BigInt(String(roomId)) % 9000000000n) + PUBLIC_INSTANCE_BASE,
-  );
+  // Stable numeric instance id from the (possibly 64-bit) room id: a big id rounds as a
+  // float, so take it modulo a safe range as BigInt, then add the base as a plain Number.
+  const instBase =
+    Number(BigInt(String(roomId)) % 9000000000n) + PUBLIC_INSTANCE_BASE;
   return {
     roomInstanceId: instBase,
     roomId: String(roomId),
