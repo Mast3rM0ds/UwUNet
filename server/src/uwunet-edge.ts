@@ -486,6 +486,32 @@ const rroData = readStatic("rro-rooms.json", { rooms: {}, byName: {} }) as {
 };
 const rroRoomById = (id: number): Record<string, unknown> | undefined => rroData.rooms[String(id)];
 const rroRoomIdByName = (name: string): number | undefined => rroData.byName[name.toLowerCase()];
+
+// RRO ownership: make one account the Creator/owner of every first-party room, so they show
+// as that player's rooms and that account can manage/build them. Resolved from the DB by
+// username or display name (default "sonakrie"), or forced with UWU_RRO_OWNER_ID. Applied to
+// the loaded RRO data in place at startup — restart the edge once the account exists.
+const RRO_OWNER_NAME = (process.env.UWU_RRO_OWNER ?? "sonakrie").toLowerCase();
+const rroOwnerId: number | null = (() => {
+  const envId = Number(process.env.UWU_RRO_OWNER_ID);
+  if (Number.isInteger(envId) && envId > 0) return envId;
+  const u = Object.values(db.users).find(
+    (x) => x.Username?.toLowerCase() === RRO_OWNER_NAME || x.DisplayName?.toLowerCase() === RRO_OWNER_NAME,
+  );
+  return u ? Number(u.Id) : null;
+})();
+if (rroOwnerId !== null) {
+  for (const room of Object.values(rroData.rooms)) {
+    room.CreatorAccountId = rroOwnerId;
+    room.Roles = [{ AccountId: rroOwnerId, Role: 255, LastChangedByAccountId: null, InvitedRole: 0 }];
+    for (const sr of Array.isArray(room.SubRooms) ? (room.SubRooms as Record<string, unknown>[]) : []) {
+      sr.CreatorAccountId = rroOwnerId;
+    }
+  }
+  console.log(`[uwunet] RRO owner -> account ${rroOwnerId} ("${RRO_OWNER_NAME}") on all ${Object.keys(rroData.rooms).length} first-party rooms`);
+} else {
+  console.log(`[uwunet] RRO owner "${RRO_OWNER_NAME}" not found in DB — RROs keep original ownership (set UWU_RRO_OWNER or UWU_RRO_OWNER_ID)`);
+}
 // An RRO's first subroom, as matchmaking needs it (scene = the baked UnitySceneId).
 const rroSubRoom = (
   id: number,
