@@ -527,6 +527,57 @@ const rroSubRoom = (
     maxCapacity: typeof sr.MaxPlayers === "number" ? (sr.MaxPlayers as number) : 16,
   };
 };
+// A first-party subroom's published save (CurrentSave), by room + subroom id. Only the RROs
+// with a baked interactive save carry one (MakeItToMidnight et al.); the other 24 are null.
+const rroSubRoomSave = (
+  roomId: number,
+  subRoomId: number,
+): Record<string, unknown> | undefined => {
+  const dto = rroRoomById(roomId);
+  if (!dto || !Array.isArray(dto.SubRooms)) return undefined;
+  const sr = (dto.SubRooms as Record<string, unknown>[]).find((s) => Number(s.SubRoomId) === subRoomId);
+  const save = sr?.CurrentSave;
+  return save && typeof save === "object" ? (save as Record<string, unknown>) : undefined;
+};
+// The save-detail projection (SubRoomDataSaveDetailDto) the client awaits before downloading the
+// scene blob. Field names, casing and ORDER mirror the reference's toSaveDetail exactly — a
+// missing/extra/mis-cased field is a fatal "Malformed Response" and the room won't load. The main
+// bundle is lifted to top-level UnityAsset; UnitySubAssets are the dependency bundles only
+// (filtered to the caller's target), which our maker-pen RROs don't carry, so [] in practice. The
+// load-bearing fields are DataBlob (the /room/{blob} scene key) + DataBlobHash.
+const subRoomSaveDetail = (
+  save: Record<string, unknown>,
+  target: number,
+): Record<string, unknown> => {
+  const subAssets = (Array.isArray(save.UnitySubAssets) ? (save.UnitySubAssets as Record<string, unknown>[]) : [])
+    .filter((a) => Number(a.Target ?? 0) === target)
+    .map((a) => ({
+      UnityAssetId: (a.UnityAssetId as string) ?? null,
+      UnityAsset: (a.Filename as string) ?? (a.UnityAsset as string) ?? null,
+      UnityAssetHash: (a.Hash as string) ?? (a.UnityAssetHash as string) ?? null,
+    }));
+  return {
+    UnitySubAssets: subAssets,
+    ReferencedUnityAssets: [],
+    UnityAsset: (save.UnityAsset as string) ?? null,
+    UnityAssetHash: (save.UnityAssetHash as string) ?? null,
+    SubRoomDataSaveId: Number(save.SubRoomDataSaveId) || 0,
+    SubRoomId: Number(save.SubRoomId) || 0,
+    UnityAssetId: (save.UnityAssetId as string) ?? null,
+    ReferencedUnityAssetIds: Array.isArray(save.ReferencedUnityAssetIds) ? save.ReferencedUnityAssetIds : [],
+    DataBlob: (save.DataBlob as string) ?? null,
+    DataBlobHash: (save.DataBlobHash as string) ?? null,
+    PersistenceVersion: Number(save.PersistenceVersion) || 0,
+    OMVersion: Number(save.OMVersion) || 0,
+    SavedByAccountId: save.SavedByAccountId ?? null,
+    SavedOnPlatform: Number(save.SavedOnPlatform) || 0,
+    SavedOnDeviceClass: Number(save.SavedOnDeviceClass) || 0,
+    Description: typeof save.Description === "string" ? save.Description : "",
+    ModerationState: Number(save.ModerationState) || 0,
+    CreatedAt: typeof save.CreatedAt === "string" ? save.CreatedAt : "",
+    UgcSubVersion: Number(save.UgcSubVersion) || 0,
+  };
+};
 // The RRO DTOs as a browse list — every first-party room except the Orientation tutorial
 // (room 13 is new-user-only, not a place you browse to). Used by the hot feed and search.
 const rroDtoList = (): Record<string, unknown>[] =>
@@ -1968,6 +2019,36 @@ route("GET", "/rooms/featuredrooms/current", (c) => {
     EndAt: "9999-12-08T11:00:00Z",
     Rooms: [], // nothing published here yet
   });
+});
+
+// Sub-room saves — the client fetches the published save's metadata here to get the scene-data
+// blob (DataBlob) before downloading it from /room/{blob}. MUST sit before the /rooms/** catch-
+// all (first-match-wins) or it 404s "no such room" and the join aborts (match reportjoinresult
+// error_code 8700). Only RROs with a baked save (e.g. MakeItToMidnight, room 20930) resolve a
+// save; the rest have none. Order here matters: the literal `no_unity_assets` list must precede
+// the numeric `{saveId}` detail — the detail's regex pins to digits so the list path can't fall
+// into it, but registration order settles it first anyway.
+const SUBROOM_SAVES_PAGE = { Results: [], TotalResults: 0, TotalCount: 0 };
+route("GET", "/rooms/{roomId}/subrooms/{subRoomId}/saves/no_unity_assets", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  // A published RRO carries its CurrentSave in the room DTO, so the history list isn't needed to
+  // play — answer the reference's empty page (unknown room/subroom is a page, never a 404).
+  c.send(200, SUBROOM_SAVES_PAGE);
+});
+route("GET", "/rooms/{roomId}/subrooms/{subRoomId}/saves/{saveId}", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const m = /^\/rooms\/(\d+)\/subrooms\/(\d+)\/saves\/(\d+)$/.exec(c.path);
+  if (!m) return c.send(404, { Code: 404, Error: "no such save" });
+  const save = rroSubRoomSave(Number.parseInt(m[1], 10), Number.parseInt(m[2], 10));
+  if (!save || Number(save.SubRoomDataSaveId) !== Number.parseInt(m[3], 10)) {
+    return c.send(404, { Code: 404, Error: "no such save" });
+  }
+  const t = Number.parseInt(c.query.get("unityAssetTarget") ?? "", 10);
+  c.send(200, subRoomSaveDetail(save, Number.isInteger(t) ? t : 0));
+});
+route("GET", "/rooms/{roomId}/subrooms/{subRoomId}/saves", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, SUBROOM_SAVES_PAGE);
 });
 
 // GET /rooms/{id} — during "preparing", the client fetches the full Room to build the scene
