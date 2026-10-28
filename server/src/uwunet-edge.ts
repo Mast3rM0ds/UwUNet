@@ -507,6 +507,18 @@ const rroDtoList = (): Record<string, unknown>[] =>
   Object.entries(rroData.rooms)
     .filter(([id]) => Number(id) !== 13)
     .map(([, dto]) => dto);
+// A discovery row's RRO ids, from static/room-rows.json `rows` (editorial: nothing ranks
+// here; read per request, so editing it needs no restart). Keyed by the row slug folded to
+// lowercase (the reference lists.app.ts ROW_FEEDS). "*" = every browsable RRO. Unknown key →
+// undefined. Ids that are not RROs are DROPPED — roomDtoFor() would otherwise synthesize a
+// dorm for them when the client resolves the row through /rooms/bulk.
+const roomRowIds = (key: string): number[] | undefined => {
+  const f = readStatic("room-rows.json", {}) as { rows?: Record<string, unknown> };
+  const v = f.rows?.[key.toLowerCase()];
+  if (v === "*") return rroDtoList().map((d) => Number(d.RoomId));
+  if (!Array.isArray(v)) return undefined;
+  return v.map(Number).filter((n) => Number.isInteger(n) && rroRoomById(n) !== undefined);
+};
 const dormRoomDto = (id: number, username: string) => ({
   ...roomTemplate,
   RoomId: id,
@@ -1370,6 +1382,23 @@ route("GET", "/rooms/visitedby/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
+// Play > Library's "Favorites" row (MyFavorites → the reference rooms.app.ts
+// "/rooms/favoritedby/me"): a bare RoomDto[]. Nothing can favorite a room yet, so [] —
+// before this it fell into /rooms/** and 404'd "no such room" (a failed-load row).
+route("GET", "/rooms/favoritedby/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, []);
+});
+// Play > Library's "My Rooms" row (MyCreatedRooms). The reference rooms.app.ts serves both
+// "/rooms/createdby/me" and the legacy "/roomserver/rooms/createdby/me" with its ownedRooms
+// handler — the dorm INCLUDED (every room the account created; ours is only the dorm). Only
+// ownedby/me drops it.
+const createdByMe = (c: Ctx) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, [roomDtoFor(selfPlayerId(c))]);
+};
+route("GET", "/rooms/createdby/me", createdByMe);
+route("GET", "/roomserver/rooms/createdby/me", createdByMe);
 // No instance queue yet → always empty (the reference apps/match match.app.ts: /rooms/requiring/*).
 route("GET", "/rooms/requiring/developer", (c) => c.send(200, []));
 route("GET", "/rooms/requiring/rrplus", (c) => c.send(200, []));
@@ -1398,6 +1427,21 @@ route("GET", "/sections/pagesource/{type}", (c) => {
   const body = readStatic(`${type}.json`, null);
   if (body === null) return c.send(404, {});
   c.send(200, body);
+});
+// Sections by id (the reference apps/discovery discovery.app.ts "/sections/bulk"): the Play
+// tabs' curated lists (static/curated-lists.json) name SECTION ids in ItemIds, and the client
+// resolves them here. Answer = the catalogue static/sections.json (the reference's, verbatim)
+// FILTERED by the repeated ?id= — catalogue order (not query order), unknown ids dropped, a
+// repeated id once, rows verbatim (same camelCase shape as pagesource). No id at all → []
+// (NOT the whole catalogue); only a missing catalogue is a 404. Comma-separated ids are
+// tolerated too (a deviation; section ids never contain a comma).
+route("GET", "/sections/bulk", (c) => {
+  const ids = c.query.getAll("id").flatMap((v) => v.split(",")).map((s) => s.trim()).filter(Boolean);
+  if (ids.length === 0) return c.send(200, []);
+  const rows = readStatic("sections.json", null);
+  if (!Array.isArray(rows)) return c.send(404, {});
+  const wanted = new Set(ids);
+  c.send(200, (rows as Array<Record<string, unknown>>).filter((s) => typeof s.id === "string" && wanted.has(s.id)));
 });
 
 // --- econ.rec.net: store + RR+ ---
@@ -1512,10 +1556,77 @@ route("GET", "/api/influencerpartnerprogram/influencers", (c) => {
 // One discovery ROW's contents (the reference lists.app.ts "/algorithmiclists/:list"): the
 // envelope is { Type: echoed?type=, Entities: [{Id:"str", Context:null}] }, and a row with
 // nothing behind it is a 200 with NO entities (a 404 renders as a failed carousel; an
-// empty one is hidden — lists.test.ts:890). Nothing ranks here, so even HotList is empty.
+// empty one is hidden — lists.test.ts:890). Nothing ranks here, so a ROOM row (type 1, the
+// reference's default) is filled editorially from static/room-rows.json via roomRowIds(); the
+// client then resolves the ids through /rooms/bulk. `{list}` is the row slug (a section's
+// sourceMetadata, e.g. battle_algoendpoint) — or, per the reference's own docs, the SECTION
+// id itself, which we map to its slug through static/sections.json. The store rows (types
+// 4/5) and any unknown row stay EMPTY; every other type gets the room row, like the reference.
 route("GET", "/algorithmiclists/{list}", (c) => {
   const t = Number.parseInt(c.query.get("type") ?? "", 10);
-  c.send(200, { Type: Number.isInteger(t) ? t : 0, Entities: [] });
+  const type = t >= 0 && t <= 255 ? t : 1; // echoed only when it fits the client's byte
+  let key = "";
+  try {
+    key = decodeURIComponent(c.path.split("/").pop() ?? "").toLowerCase();
+  } catch { /* malformed escape — unknown row */ }
+  let ids = roomRowIds(key);
+  if (ids === undefined) {
+    const sec = (readStatic("sections.json", []) as Array<Record<string, unknown>>).find(
+      (s) => String(s.id).toLowerCase() === key,
+    );
+    if (sec && typeof sec.sourceMetadata === "string") ids = roomRowIds(sec.sourceMetadata);
+  }
+  const entities =
+    type !== 4 && type !== 5 ? (ids ?? []).map((id) => ({ Id: String(id), Context: null })) : [];
+  c.send(200, { Type: type, Entities: entities });
+});
+// Send a list body whose 64-bit ListIds must be NUMBERS on the wire: JSON.stringify can't
+// print them exactly, so they travel as digit strings and are unquoted here. Otherwise exactly
+// c.send — fixed Content-Length (BestHTTP malforms larger chunked bodies) + the harvest log.
+const sendWithListIds = (c: Ctx, obj: unknown) => {
+  const out = JSON.stringify(obj).replace(/"ListId":"(\d+)"/g, '"ListId":$1');
+  const buf = Buffer.from(out, "utf8");
+  log({ event: "response", host: c.req.headers.host, method: c.req.method, url: c.req.url, path: c.path, status: 200, body: out });
+  c.res.setHeader("content-type", "application/json; charset=utf-8");
+  c.res.setHeader("content-length", String(buf.length));
+  c.res.setHeader("x-uwunet", "uwunet");
+  c.res.writeHead(200);
+  c.res.end(buf);
+};
+// Curated lists by id (the reference lists.app.ts "/curatedlists/bulk": ?id= repeated). The
+// reference answers ONE canned list for anything — never [], and an unknown id is still a
+// 200, since a 404 shows as a failed row. We answer one list per requested id instead: a
+// static/room-rows.json `playlists` entry (the gameconfig PlayMenuCuratedCarouselsMap ids +
+// the Fun with Friends PlaylistById), else a captured list from static/curated-lists.json by
+// ListId (the Play tabs' page lists — so by-id agrees with by-name), else the canned shape with
+// no items; no usable id at all → the canned list alone. Shape per the reference: ItemIds =
+// room ids as STRINGS (real RROs only), ImageName a string (the client parses it into a string
+// field), Description null, NO Accessibility.
+route("GET", "/curatedlists/bulk", (c) => {
+  const ids = [
+    ...new Set(c.query.getAll("id").flatMap((v) => v.split(",")).map((s) => s.trim()).filter(Boolean)),
+  ];
+  const pl =
+    (readStatic("room-rows.json", {}) as {
+      playlists?: Record<string, { Name?: string; ItemIds?: unknown[] }>;
+    }).playlists ?? {};
+  const canned = (id: string) => ({
+    ListId: /^\d+$/.test(id) ? id : "17859340", // the reference's canned id
+    CreatorAccountId: 1,
+    Name: pl[id]?.Name ?? "My List",
+    Description: null,
+    ImageName: "",
+    Type: 1,
+    ItemIds: (pl[id]?.ItemIds ?? [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && rroRoomById(n) !== undefined)
+      .map(String),
+    CreatedAt: "2025-07-18T00:00:00Z",
+  });
+  const lists = (ids.length > 0 ? ids : [""]).map(
+    (id) => (!pl[id] && curatedLists.find((l) => String(l.ListId) === id)) || canned(id),
+  );
+  sendWithListIds(c, lists);
 });
 // One curated list (the reference lists: curated-lists.ts + lists.app.ts "/curatedlists").
 // Params: creatorAccountId&type&name. Order: a capture matching the name, a RESERVED
@@ -1572,12 +1683,7 @@ route("GET", "/curatedlists", (c) => {
     // No such list: a well-formed but EMPTY placeholder — a {} or 404 breaks the client.
     list = curatedListPlaceholder(creatorId, type, name);
   }
-  const out = JSON.stringify(list).replace(/"ListId":"(\d+)"/g, '"ListId":$1');
-  const buf = Buffer.from(out, "utf8");
-  c.res.setHeader("content-type", "application/json; charset=utf-8");
-  c.res.setHeader("x-uwunet", "uwunet");
-  c.res.writeHead(200);
-  c.res.end(buf);
+  sendWithListIds(c, list);
 });
 
 // --- community board (the reference apps/api routes/gameplay.ts "/api/communityboard/v2/
@@ -1757,17 +1863,37 @@ route("GET", "/api/PlayerReporting/v1/voteToKickReasons", (c) => {
 // "Hot" rooms feed ("/rooms/hot", params tag/skip/take — take defaults 100). The shape is
 // the PAGED one, { Results, TotalResults } (RoomDto[] page — see the reference's
 // integration test "GET /rooms/hot returns a paginated { Results, TotalResults }"), NOT a
-// bare array. We have no live public rooms, so the feed is the same page with nothing in
-// it: { Results: [], TotalResults: 0 } (rooms/ownedby/me-style [] here would malform the
-// browse screen's paged reader).
+// bare array (rooms/ownedby/me-style [] here would malform the browse screen's paged reader).
 route("GET", "/rooms/hot", (c) => {
   const tag = c.query.get("tag") ?? "";
-  const skip = Number.parseInt(c.query.get("skip") ?? "0", 10) || 0; // mirrored; nothing to page
+  const skip = Number.parseInt(c.query.get("skip") ?? "0", 10) || 0;
   const take = Number.parseInt(c.query.get("take") ?? "100", 10) || 100;
   log({ event: "rooms-hot", tag, skip, take });
   // The RROs + Rec Center are our "hot" rooms, paged. This is how they show up in the room
-  // browser so the player can tap in (matchmake into them via /matchmake/room/{id}).
-  const all = rroDtoList();
+  // browser so the player can tap in (matchmake into them via /matchmake/room/{id}). A tag
+  // with its own row in static/room-rows.json is served from it — Play > Explore's first row
+  // is Hot/`new`, and it is a DEDUPE source (gameconfig PlayMenuDedupeSources), so serving
+  // every RRO there would empty the category rows under it. Deliberate deviation: the
+  // reference's tag=new excludes RROs entirely. Every other tag (rro, empty, …) is unchanged.
+  // An EMPTY row (e.g. staffpicks) falls back too: before rows existed every tag got every RRO.
+  const rowIds = tag ? roomRowIds(tag) : undefined;
+  const all = rowIds?.length ? rowIds.map((id) => roomDtoFor(id)) : rroDtoList();
+  c.send(200, { Results: all.slice(skip, skip + take), TotalResults: all.length });
+});
+// A CarouselEndpoint row asked of the rooms worker by slug (the reference rooms.app.ts
+// "/rooms/carousel/rising" — "the one the client asks for by name"; paged like /rooms/hot,
+// take defaults 100). Defensive: which host a CarouselEndpoint row hits is unconfirmed, so
+// the same editorial rows as /algorithmiclists answer here. Unknown slug → an EMPTY page
+// (not the reference's 404, which renders as a failed carousel). MUST sit before /rooms/**.
+route("GET", "/rooms/carousel/{slug}", (c) => {
+  let slug = "";
+  try {
+    slug = decodeURIComponent(c.path.split("/").pop() ?? "");
+  } catch { /* malformed escape — unknown slug */ }
+  const skip = Number.parseInt(c.query.get("skip") ?? "0", 10) || 0;
+  const take = Number.parseInt(c.query.get("take") ?? "100", 10) || 100;
+  log({ event: "rooms-carousel", slug, skip, take });
+  const all = (roomRowIds(slug) ?? []).map((id) => roomDtoFor(id));
   c.send(200, { Results: all.slice(skip, skip + take), TotalResults: all.length });
 });
 
@@ -2647,17 +2773,21 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
               : "";
     if (hit) {
       const ext = hit.slice(hit.lastIndexOf(".")).toLowerCase();
+      const data = readFileSync(hit);
       const ctype =
         ext === ".json" ? "application/json; charset=utf-8"
         : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
         : ext === ".png" ? "image/png"
         : ext === ".webp" ? "image/webp"
         : ext === ".gif" ? "image/gif"
+        // img.rec.net names are often extensionless ("2026-10-26/<guid>"): sniff a JPEG.
+        : data[0] === 0xff && data[1] === 0xd8 ? "image/jpeg"
         : "application/octet-stream";
       res.setHeader("content-type", ctype);
+      res.setHeader("content-length", String(data.length)); // non-chunked, like c.send
       res.setHeader("x-uwunet", "fixture");
       res.writeHead(200);
-      res.end(req.method === "HEAD" ? undefined : readFileSync(hit));
+      res.end(req.method === "HEAD" ? undefined : data);
       log({ event: "fixture", host: req.headers.host, method: req.method, path: p });
       return;
     }
@@ -2667,14 +2797,18 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse, use
   // room shot, another player's profile photo, or a thumbnail we haven't provided would 404
   // and leave a broken/blank tile in the menus. Serve a neutral placeholder instead — a real
   // image always beats a 404 here (same reasoning as the dead-endpoint discipline).
+  // On the img host every path is an image, extension or not (a room's ImageName is often a
+  // bare "<date>/<guid>").
   if (req.method === "GET" || req.method === "HEAD") {
-    if (/\.(jpe?g|png|webp|gif)$/i.test(p)) {
+    if (/\.(jpe?g|png|webp|gif)$/i.test(p) || /^img\./i.test(String(req.headers.host ?? ""))) {
       const ph = path.join(HERE, "fixtures", "_placeholder.jpg");
       if (existsSync(ph)) {
+        const data = readFileSync(ph);
         res.setHeader("content-type", "image/jpeg");
+        res.setHeader("content-length", String(data.length)); // non-chunked, like c.send
         res.setHeader("x-uwunet", "placeholder");
         res.writeHead(200);
-        res.end(req.method === "HEAD" ? undefined : readFileSync(ph));
+        res.end(req.method === "HEAD" ? undefined : data);
         log({ event: "placeholder-image", host: req.headers.host, path: p });
         return;
       }

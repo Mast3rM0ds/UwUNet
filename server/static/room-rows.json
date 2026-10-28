@@ -1,0 +1,53 @@
+{
+  "_comment": "Editorial RRO assignments for the Play tab (nothing ranks on UwUNet). rows: discovery row slug (lowercase; /algorithmiclists/{slug}, /rooms/hot?tag=, /rooms/carousel/{slug}) -> RRO room ids, or \"*\" = every browsable RRO. The Play > Explore rows (new .. explore_algoendpoint) are DEDUPE sources (gameconfig PlayMenuDedupeSources=Hot,CarouselEndpoint): keep them DISJOINT or a later row empties and hides. hotlist/foryou are deliberate deviations (the reference ranks player rooms there); foryou is a short pick list because Play > Highlights dedupes Most Popular (Hot, every RRO) against it. playlists: curated list id (/curatedlists/bulk, PlaylistById) -> {Name, ItemIds}; not deduped, may overlap. Ids not in rro-rooms.json are dropped. Read per request: edits need no restart.",
+  "rows": {
+    "new": [23495],
+    "recentlyupdated": [2],
+    "battle_algoendpoint": [10, 11, 18, 8, 37, 20, 21],
+    "quests_algoendpoint": [12, 14, 15, 16, 38],
+    "roleplay_algoendpoint": [],
+    "horror_algoendpoint": [20930],
+    "hangout_algoendpoint": [22, 25],
+    "casual_algoendpoint": [3, 4, 6, 7, 9, 17, 39],
+    "explore_algoendpoint": [41, 45],
+    "hotlist": "*",
+    "foryou": [2, 10, 18, 12, 3, 22],
+    "staffpicks": [],
+    "inkshowcase": [],
+    "rising": []
+  },
+  "playlists": {
+    "7732248245192312892": {
+      "Name": "Fun with Friends",
+      "ItemIds": [2, 3, 8, 17, 39, 22]
+    },
+    "17859346": {
+      "Name": "Roleplay",
+      "ItemIds": []
+    },
+    "17859347": {
+      "Name": "Casual Play",
+      "ItemIds": [3, 4, 6, 7, 9, 17, 39]
+    },
+    "17859348": {
+      "Name": "Quest",
+      "ItemIds": [12, 14, 15, 16, 38]
+    },
+    "17859349": {
+      "Name": "Battle",
+      "ItemIds": [10, 11, 18, 8, 37, 20, 21, 23495]
+    },
+    "17859350": {
+      "Name": "Hangout",
+      "ItemIds": [2, 22, 25]
+    },
+    "17859351": {
+      "Name": "Explore",
+      "ItemIds": [41, 45, 25]
+    },
+    "17859352": {
+      "Name": "Horror",
+      "ItemIds": [20930]
+    }
+  }
+}
