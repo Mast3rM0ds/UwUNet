@@ -11,7 +11,7 @@ UWU=/home/bloink/UwUNet
 BUILD="$UWU/client2025/depot"
 STEAM=~/.local/share/Steam
 PROTON="$STEAM/steamapps/common/Proton - Experimental"
-LOG=/tmp/claude-1000/-home-bloink-UwUNet/7c773c02-3ad3-4ea9-aab3-ddeea8a66a85/scratchpad
+LOG="$UWU/client2025/logs"
 mkdir -p "$LOG"
 
 [ -f "$BUILD/Recroom_Release.exe" ] || { echo "[!] build not found at $BUILD — download depot + run stage-patch.sh first"; exit 1; }
@@ -58,6 +58,23 @@ export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM"
 export STEAM_COMPAT_DATA_PATH="$STEAM/steamapps/compatdata/471710"
 export SteamAppId=471710 SteamGameId=471710 PROTON_LOG=1
 [ -n "$PRELOAD" ] && export LD_PRELOAD="$PRELOAD"
+
+# Rec Room forces OpenVR at ENGINE STARTUP via boot.config's xrsdk-pre-init-library line.
+# That line is required for VR, but in screen mode it hangs the game forever at
+# "GfxDevice: creating device client" waiting on a VR compositor that never comes up
+# (process alive, no window). So regenerate boot.config to match the launch mode: keep
+# every other line from the pristine .orig, and only re-add the xrsdk line for vr.
+BOOTCFG="$BUILD/Recroom_Release_Data/boot.config"
+if [ -f "$BOOTCFG" ]; then
+  [ -f "$BOOTCFG.orig" ] || cp "$BOOTCFG" "$BOOTCFG.orig"
+  grep -v '^xrsdk-pre-init-library=' "$BOOTCFG.orig" > "$BOOTCFG"
+  if [ "$MODE" = "vr" ]; then
+    echo 'xrsdk-pre-init-library=XRSDKOpenVR' >> "$BOOTCFG"
+    echo "[run] boot.config: OpenVR pre-init ENABLED (VR — SteamVR auto-starts on VR_Init)"
+  else
+    echo "[run] boot.config: OpenVR pre-init removed (flat desktop window)"
+  fi
+fi
 
 echo "[run] starting Injector.exe"
 "$PROTON/proton" run "./Injector.exe" > "$LOG/injector.log" 2>&1 &
