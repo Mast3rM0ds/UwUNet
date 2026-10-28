@@ -108,6 +108,68 @@ The dev + gaming box is moving OSes (the FreeBSD VPS is **not** changing). On th
 
 Playable end-to-end: boots past anti-cheat/cert wall, auth + Steam cached-login, dorm + all
 first-party rooms + Rec Center, 2-player Photon multiplayer, god accounts (maker pen).
-Recently fixed: maker-pen palette, avatar save (DB-persisted), room thumbnails.
-**In progress:** parties (rides the notify-hub WS; harvesting the protocol — see memory
-`uwunet-boot-progress`). **Parked:** voice (plan in `docs/voice-server.md`).
+**Recently fixed & shipped:** maker-pen palette (inventions endpoints), avatar save
+(DB-persisted outfits), room thumbnails + Play category tiles (generated into
+`server/fixtures/` with PIL), and the objectives / sanitize / verifyRole / config-categories
+endpoints.
+
+## Open tasks (handoff)
+
+Tackle in this order. Everything below was reverse-engineered from the live harvest +
+recflare; verify against a fresh harvest before and after each change.
+
+### 1. Play tab shows no rooms (highest priority, mid-investigation)
+
+The client uses the **new tabbed Play UI**, whose resolution chain is:
+1. `GET /sections/bulk?id=…&id=…` → the section layout for the tab. **We 404 this** (we only
+   serve `/sections/pagesource/{type}`) → no sections render → no rooms. **This is the break.**
+2. per section, resolve its feed: `/algorithmiclists/{list}` (served, returns EMPTY
+   `{Type,Entities:[]}` ~edge line 1515), `/rooms/hot?tag=rro` (served, returns RROs ✓),
+   `/curatedlists` (served), `/curatedlists/bulk` (**we 404**).
+3. bulk-fetch the room cards via `/rooms/bulk` (served ✓).
+
+recflare serves `/sections/bulk` from `apps/discovery/static/sections.json`, but its 14
+sections use personal/algo feeds (ContinuePlaying/Favorites/AlgoEndpoint) that are **empty**
+for a fresh account — so serving it verbatim still shows no rooms. **Next steps:**
+- Get the exact section ids the client asks for (query is logged in the request event):
+  `grep '"path":"/sections/bulk"' data/harvest/requests.jsonl | grep -oE '"url":"[^"]*"' | tail -3`
+  (same for `/curatedlists/bulk`).
+- Add `route("GET","/sections/bulk", …)` filtering a new `server/static/sections.json` by
+  `c.query.getAll("id")` — matching sections in catalogue order, `[]` when no `id`, 404 only
+  if the file is missing (mirror recflare `apps/discovery/discovery.app.ts`).
+- Build `sections.json` with **those** ids, and make their feed return the RROs: point the
+  sections at a feed we can fill, and make `/algorithmiclists/{list}` return RRO entities
+  (`{Id:"<rroId>",Context:null}`) so the rows populate via `/rooms/bulk`.
+- Implement `/curatedlists/bulk` (recflare lists.app.ts: one canned list for any id, shape
+  `{ListId,CreatorAccountId,Name,Description:null,ImageName:"",Type,ItemIds:["<str>"],CreatedAt}`
+  — put real RRO ids in `ItemIds` to show rooms).
+- `rroDtoList()` (~line 506) is the RRO list; `server/static/rro-rooms.json` has ids/ImageNames.
+
+### 2. Parties (in progress)
+
+Rides the **SignalR notify-hub WS** (`/hub/v1`, `handleWsUpgrade` ~line 2666), NOT REST —
+recflare has no reference. Commit `61d3c43` added `ws-msg` harvest logging. Next: exercise the
+party UI, capture `grep '"event":"ws-msg"' data/harvest/requests.jsonl`, then implement party
+create/invite/join + make the hub ROUTE (associate each WS connection with its account →
+registry → relay invites between players). The friend graph (relationships) is already built.
+`/thread/party` → `{}` is a stub.
+
+### 3. Voice (parked)
+
+Full plan in `docs/voice-server.md`. Key insight: the room heartbeat sends
+`EncryptVoiceChat:false`, so **try plaintext first** (the voice server, layers 1–3, is built)
+BEFORE any binary patching: `sh start-voice.sh`, advertise `UWU_VOICE_ADDR=51.38.36.86:8470`
+on the edge, enter a room, see if it connects. A dead voice addr **fails room entry** — fully
+reversible by unsetting `UWU_VOICE_ADDR` and restarting the edge.
+
+### Minor
+- `/welcome_center_v2.png` falls back to the generic placeholder; generate a real one (PIL,
+  write to `server/fixtures/`) if wanted.
+
+### Diagnostic gotchas (read before trusting the harvest)
+- `data/harvest/requests.jsonl` is **CUMULATIVE** — a fixed endpoint keeps showing old 404s.
+  Only trust a 404 count for an endpoint you've confirmed is *never* implemented, or filter by
+  recency (`tail -N`).
+- Fixtures/static are read **fresh per request** → image/JSON changes need only `git pull` on
+  the VPS (no edge restart). **Code** changes to `uwunet-edge.ts` need a restart.
+- recflare reference: `gh api repos/recflare/server/contents/<path> --jq .content | base64 -d`.
