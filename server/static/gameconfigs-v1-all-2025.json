@@ -4117,7 +4117,7 @@
 	},
 	{
 		"Key": "Security.SignaturePublicKey",
-		"Value": "ia4WHQllHerKrKViUVdPJuXeMfjjqYymePQZkhoDred0lCon4wNfgZGF4og2DHBXVsnG+BLldx2tra/mlOVvVg==",
+		"Value": "",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
