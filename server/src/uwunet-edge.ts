@@ -1539,6 +1539,19 @@ route("GET", "/rooms/ownedby/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
 });
+// The reference rooms.app.ts "/rooms/ownedby/{accountId}" — another player's published rooms,
+// the profile-page "Rooms" grid. UwUArchivist (the importer account) owns every ported room,
+// so visiting their profile browses the whole archive in one place.
+route("GET", "/rooms/ownedby/{number}", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  const who = c.path.split("/").pop() ?? "";
+  const pagedShape = c.query.get("take") != null || c.query.get("skip") != null;
+  const owned = Object.entries(rroData.rooms)
+    .filter(([, dto]) => Number(dto.CreatorAccountId) === Number(who))
+    .map(([, dto]) => dto);
+  if (!pagedShape) return c.send(200, owned); // RoomDto[] bare — profile-page shape
+  c.send(200, { Results: owned, TotalResults: owned.length, TotalCount: owned.length });
+});
 route("GET", "/rooms/visitedby/me", (c) => {
   if (!c.authUser) return c.send(401, {});
   c.send(200, []);
@@ -2857,7 +2870,7 @@ route("GET", "/Accounts/account/me", (c) => {
 });
 
 route("GET", "/Accounts/account/bulk", (c) => {
-  const ids = c.query.getAll("id");
+  const ids = [...c.query.getAll("id"), ...c.query.getAll("ids")];
   const out = Object.values(db.users)
     .filter((u) => ids.includes(u.Id))
     .map(accountJson);
