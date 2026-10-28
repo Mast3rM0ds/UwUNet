@@ -1957,6 +1957,22 @@ route("GET", "/api/customAvatarItems/GetCustomAvatarItemCurrentSavesForLegacyAva
 route("POST", "/api/avatar/v1/lockeditems/bulk", (c) => c.send(200, []));
 route("GET", "/api/avatar/v1/lockeditems/bulk", (c) => c.send(200, []));
 
+// Inventions (reference apps/api routes/avatar.ts, tags:['Inventions']). The MAKER PEN
+// builds its WHOLE palette (shapes + circuits + inventions) in one Promise.all / WhenAll;
+// a 404 on ANY of these throws and rejects the WhenAll, so every tab comes up empty and
+// the client stalls in WaitForShapes. Serve the reference's empty shapes so the palette
+// builds: both are plain InventionDto arrays, empty when nobody has published anything.
+route("GET", "/api/inventions/v2/search", (c) => c.send(200, [])); // browse/search → InventionDto[]
+route("GET", "/api/inventions/v1/fromcreators", (c) => c.send(200, [])); // by-creator portfolio → []
+route("GET", "/api/inventions/v2/mine", (c) => c.send(200, [])); // caller's own drafts → []
+// A creator's custom avatar items (reference CustomAvatarItemsPage) — the client fetches
+// this for other players/creators (e.g. 1000001). Page shape: TotalResults = Results.length.
+route("GET", "/api/customAvatarItems/v2/fromCreator/{accountId}", (c) =>
+  c.send(200, { Results: [], TotalResults: 0 }),
+);
+// Item wishlist for an account (empty for everyone here).
+route("GET", "/api/itemWishlists/v1/wishlist/{accountId}", (c) => c.send(200, []));
+
 // progression bulk: GET returns a default progression per id; POST returns [].
 route("GET", "/api/players/v2/progression/bulk", (c) =>
   c.send(200, parseIds(c).map((id) => ({ PlayerId: id, Level: 1, XP: 0 }))),
