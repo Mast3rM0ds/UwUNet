@@ -3958,6 +3958,340 @@
    "RestrictedCircuitsAllowListNames": [],
    "IsJuniorCreated": false,
    "IsPlacePlay": false
+  },
+  "8581927384148145199": {
+   "RoomId": 8581927384148145199,
+   "Name": "BladeBall",
+   "Description": "Earn Skins And Abilities As you Play!\r\n\r\nIn this game of focus, timing, and strategy, your skill is tested as a deflectable homing ball hunts players with increasing speed. But there's more than what meets the eye.\r\n\r\nCONTROLS: \r\nBlock: Trigger\r\nAbility: Drop Button\r\n\r\n*Bugs Are Expected, So Please Report Them When They Happen*",
+   "ImageName": "6pgr1vn7g58khk3uu963vtn4y.jpg",
+   "WarningMask": 0,
+   "CustomWarning": null,
+   "CreatorAccountId": 12428187,
+   "State": 0,
+   "Accessibility": 1,
+   "PublishState": 0,
+   "SupportsLevelVoting": false,
+   "IsRRO": false,
+   "IsRecRoomApproved": true,
+   "ExcludeFromLists": false,
+   "ExcludeFromSearch": false,
+   "SupportsScreens": true,
+   "SupportsWalkVR": true,
+   "SupportsTeleportVR": false,
+   "SupportsVRLow": true,
+   "SupportsQuest2": true,
+   "SupportsMobile": true,
+   "SupportsJuniors": true,
+   "MinLevel": 0,
+   "AgeRating": 1,
+   "CreatedAt": "2023-10-02T21:24:45.1057386Z",
+   "PublishedAt": "2023-10-23T02:45:32.3693183Z",
+   "BecameRRStudioRoomAt": null,
+   "Stats": {
+    "CheerCount": 153309,
+    "FavoriteCount": 135153,
+    "VisitorCount": 2299110,
+    "VisitCount": 6189599
+   },
+   "RankingContext": null,
+   "IsDorm": false,
+   "MaxPlayerCalculationMode": 1,
+   "MaxPlayers": 10,
+   "CloningAllowed": false,
+   "DisableMicAutoMute": false,
+   "DisableRoomComments": false,
+   "EncryptVoiceChat": false,
+   "ToxmodEnabled": false,
+   "LoadScreenLocked": false,
+   "UgcVersion": 1,
+   "PersistenceVersion": 108,
+   "UgcSubVersion": 108,
+   "MinUgcSubVersion": 108,
+   "AutoLocalizeRoom": false,
+   "LocalizationContext": {
+    "TargetLocale": null,
+    "Scope": null,
+    "LocalizedFields": [
+     "Description",
+     "CustomWarning"
+    ]
+   },
+   "IsDeveloperOwned": false,
+   "RankedEntityId": "8581927384148145199",
+   "SubRooms": [
+    {
+     "SubRoomId": 4659044960099004669,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "Home",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 144847519,
+      "SubRoomId": 4659044960099004669,
+      "UnityAssetId": "44d60f39-a199-4177-a01e-e80c1a93e8cd",
+      "DataBlob": "da41ia6lt3gr4rnb7wowojbm4.room",
+      "DataBlobHash": "x6bI4/vowbZIfuVp+rYd4KaIAJceAAX1D7/oIN0mfsQ=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 77,
+      "OMVersion": 0,
+      "UgcSubVersion": 77,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "",
+      "ModerationState": 2,
+      "CreatedAt": "2023-10-25T23:32:45.6757883Z"
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 10,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": null,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 5970149000893885205,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "Cover",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 144455296,
+      "SubRoomId": 5970149000893885205,
+      "UnityAssetId": "45dd2e98-243f-47c5-8ceb-9ab33c4f0d47",
+      "DataBlob": "0uwzf4ew236huk9icnizihcva.room",
+      "DataBlobHash": "wRmLizS47//2bGu6VGiplAJYDakinlbSuHNJwq/haTc=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 72,
+      "OMVersion": 0,
+      "UgcSubVersion": 72,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "",
+      "ModerationState": 2,
+      "CreatedAt": "2023-10-21T22:57:43.3244393Z"
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 12,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": null,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 5459470375817562280,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "AFK",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 152466568,
+      "SubRoomId": 5459470375817562280,
+      "UnityAssetId": "4397304e-27cc-4a25-9988-d9a24acf4833",
+      "DataBlob": "5tsjohhgxzdqaklwu2kezswtk.room",
+      "DataBlobHash": "UKgER/WkFfsrdB5CubhZ+mFUtUFsAafDsx7jIVjsJhw=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 88,
+      "OMVersion": 0,
+      "UgcSubVersion": 88,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "Fixed AFK",
+      "ModerationState": 2,
+      "CreatedAt": "2024-01-01T01:53:27.9164142Z"
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 1,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": null,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 1942624879951173954,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "OldGame",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 145204452,
+      "SubRoomId": 1942624879951173954,
+      "UnityAssetId": "64d5ddf4-9703-4a35-b9e4-b834ea958bbb",
+      "DataBlob": "1hdvtc8keohc7vrhdxxazk236.room",
+      "DataBlobHash": "Y0kFDLc0BzNRRUwSJbUh6GQYEU6ADTEPQfueds2QYR8=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 77,
+      "OMVersion": 0,
+      "UgcSubVersion": 77,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "POSSIBLE KEY FIX",
+      "ModerationState": 2,
+      "CreatedAt": "2023-10-29T16:40:12.829688Z"
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 10,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": null,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 6435667404027350181,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "Game",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 160208788,
+      "SubRoomId": 6435667404027350181,
+      "UnityAssetId": "abc63a37-317f-43d0-94be-8d11d5bf0fd6",
+      "DataBlob": "6n7pqpsyqz7guxc4xqp1eq8eh.room",
+      "DataBlobHash": "6W+E4HHNBtFUYQaZJ7QqLdTtgY1XD1nt5gKp8DSxCwY=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 108,
+      "OMVersion": 0,
+      "UgcSubVersion": 108,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "",
+      "ModerationState": 2,
+      "CreatedAt": "2024-02-28T16:29:43.5257948Z"
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 10,
+     "Accessibility": 1,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": 210601790,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 2682358745950621722,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "TESTGAME",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 157672402,
+      "SubRoomId": 2682358745950621722,
+      "UnityAssetId": "0c0f27ff-2e9a-4c9a-80bc-6e157d9d91a5",
+      "DataBlob": "9mtbaff4svta38m22md3i28h0.room",
+      "DataBlobHash": "G9ID6MN9pafDGJu1Dl3QCEvWlsxjozzG9mAT+mSn6jU=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 103,
+      "OMVersion": 0,
+      "UgcSubVersion": 103,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "Holy Bundle Leaving",
+      "ModerationState": 2,
+      "CreatedAt": "2024-02-04T01:48:21.7429014Z"
+     },
+     "LastModeratedSaveModerationState": 0,
+     "IsSandbox": true,
+     "MaxPlayers": 10,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": 204380056,
+     "DataSavedAt": null
+    },
+    {
+     "SubRoomId": 6404729461353106383,
+     "RoomId": 8581927384148145199,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "Game_778304",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 159581174,
+      "SubRoomId": 6404729461353106383,
+      "UnityAssetId": "032c8c54-d591-4dc5-b30e-809fcf1b1e08",
+      "DataBlob": "9stk10u5rpv20ddq5s0ewqda6.room",
+      "DataBlobHash": "ShX6LSCvQuTu0FL3ISu3t1J1Kdvh6BcTxk0yZ1qFL9M=",
+      "ReferencedUnityAssetIds": [],
+      "PersistenceVersion": 107,
+      "OMVersion": 0,
+      "UgcSubVersion": 107,
+      "SavedByAccountId": 12428187,
+      "SavedOnPlatform": 0,
+      "SavedOnDeviceClass": 2,
+      "Description": "new skybox",
+      "ModerationState": 2,
+      "CreatedAt": "2024-02-15T14:40:20.8765353Z"
+     },
+     "LastModeratedSaveModerationState": 0,
+     "IsSandbox": true,
+     "MaxPlayers": 10,
+     "Accessibility": 0,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": null,
+     "DataSavedAt": null
+    }
+   ],
+   "Tags": [
+    {
+     "Tag": "pvp",
+     "Type": 0,
+     "IsPrimaryGenre": true
+    },
+    {
+     "Tag": "action",
+     "Type": 0
+    },
+    {
+     "Tag": "beta",
+     "Type": 1
+    },
+    {
+     "Tag": "fun",
+     "Type": 0
+    },
+    {
+     "Tag": "game",
+     "Type": 0
+    },
+    {
+     "Tag": "nomp",
+     "Type": 0
+    },
+    {
+     "Tag": "rrstudio",
+     "Type": 2
+    },
+    {
+     "Tag": "octrrmonthly",
+     "Type": 2
+    },
+    {
+     "Tag": "sparkstudios",
+     "Type": 0
+    }
+   ],
+   "PromoImages": [],
+   "PromoExternalContent": [
+    {
+     "Type": 0,
+     "Reference": "Q-DGPPRStQ8"
+    }
+   ],
+   "LoadScreens": [],
+   "Roles": [],
+   "Badges": [],
+   "BoostCount": 0,
+   "CurrentSnapshotId": null,
+   "CCU": null,
+   "RestrictedCircuitsAllowListNames": [],
+   "IsJuniorCreated": false,
+   "IsPlacePlay": false
   }
  },
  "byName": {
@@ -3989,6 +4323,7 @@
   "makeittomidnight": 20930,
   "showdown": 23495,
   "ruinsofstonefall": "649924194922273060",
-  "theblackcat": 64899011
+  "theblackcat": 64899011,
+  "bladeball": "8581927384148145199"
  }
 }
