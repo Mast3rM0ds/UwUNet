@@ -9135,7 +9135,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "Fixed AFK",
       "ModerationState": 2,
-      "CreatedAt": "2024-01-01T01:53:27.9164142Z"
+      "CreatedAt": "2024-01-01T01:53:27.9164142Z",
+      "UnityAsset": "4397304e27cc4a259988d9a24acf4833.SubRoom.Main.2.5.assetbundle"
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9197,7 +9198,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "",
       "ModerationState": 2,
-      "CreatedAt": "2024-02-28T16:29:43.5257948Z"
+      "CreatedAt": "2024-02-28T16:29:43.5257948Z",
+      "UnityAsset": "abc63a37317f43d094be8d11d5bf0fd6.SubRoom.Main.2.5.assetbundle"
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
