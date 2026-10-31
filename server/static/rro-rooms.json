@@ -3129,6 +3129,137 @@
     }
    ]
   },
+  "619605": {
+   "RoomId": 619605,
+   "Name": "DormRoomPVP",
+   "Description": "A different perspective of the infamous Dorm Room!",
+   "ImageName": "8iy9e8g1zbk0yzykskaqxce74.jpg",
+   "WarningMask": 0,
+   "CustomWarning": null,
+   "CreatorAccountId": 924029,
+   "State": 0,
+   "Accessibility": 1,
+   "SupportsLevelVoting": false,
+   "IsRRO": false,
+   "IsRecRoomApproved": true,
+   "ExcludeFromLists": false,
+   "ExcludeFromSearch": false,
+   "SupportsScreens": true,
+   "SupportsWalkVR": true,
+   "SupportsTeleportVR": true,
+   "SupportsVRLow": true,
+   "SupportsQuest2": true,
+   "SupportsMobile": true,
+   "SupportsJuniors": true,
+   "MinLevel": 0,
+   "AgeRating": 1,
+   "CreatedAt": "2019-01-25T20:59:46.5422095Z",
+   "PublishedAt": "2019-01-27T17:07:56.16Z",
+   "BecameRRStudioRoomAt": null,
+   "Stats": {
+    "CheerCount": 802538,
+    "FavoriteCount": 705942,
+    "VisitorCount": 9118788,
+    "VisitCount": 26173130
+   },
+   "RankingContext": null,
+   "IsDorm": false,
+   "MaxPlayerCalculationMode": 0,
+   "MaxPlayers": 12,
+   "CloningAllowed": false,
+   "DisableMicAutoMute": false,
+   "DisableRoomComments": false,
+   "EncryptVoiceChat": false,
+   "ToxmodEnabled": true,
+   "LoadScreenLocked": false,
+   "UgcVersion": 1,
+   "PersistenceVersion": 167,
+   "AutoLocalizeRoom": true,
+   "LocalizationContext": {
+    "TargetLocale": null,
+    "Scope": null,
+    "LocalizedFields": [
+     "Description",
+     "CustomWarning"
+    ]
+   },
+   "IsDeveloperOwned": false,
+   "RankedEntityId": "619605",
+   "SubRooms": [
+    {
+     "SubRoomId": 630997,
+     "RoomId": 619605,
+     "CreatorAccountId": null,
+     "UnitySceneId": "a75f7547-79eb-47c6-8986-6767abcb4f92",
+     "Name": "Home",
+     "CurrentSave": {
+      "SubRoomDataSaveId": 201232772,
+      "SubRoomId": 630997,
+      "UnityAssetId": "b5338ca4-7e6d-4de0-b4e9-377a148dac2b",
+      "DataBlob": "225ukourcbcwqzm9nio6ypx0f.room",
+      "DataBlobHash": "PROiPNN/SAI+zsMlx/46jOP7N9VUUHrw1Pr420z79VU=",
+      "PersistenceVersion": 167,
+      "OMVersion": 0,
+      "SavedByAccountId": 924029,
+      "SavedOnPlatform": 5,
+      "SavedOnDeviceClass": 3,
+      "Description": "",
+      "ModerationState": 2,
+      "CreatedAt": "2025-02-07T16:05:44.8503711Z",
+      "ReferencedUnityAssetIds": []
+     },
+     "LastModeratedSaveModerationState": 2,
+     "IsSandbox": true,
+     "MaxPlayers": 12,
+     "Accessibility": 1,
+     "ShouldAutoStageSaves": true,
+     "StagedSubRoomDataSaveId": 201246580,
+     "DataSavedAt": null
+    }
+   ],
+   "Tags": [
+    {
+     "Tag": "pvp",
+     "Type": 0,
+     "IsPrimaryGenre": true
+    },
+    {
+     "Tag": "action",
+     "Type": 0
+    },
+    {
+     "Tag": "treasurehunt",
+     "Type": 2
+    },
+    {
+     "Tag": "beta",
+     "Type": 1
+    },
+    {
+     "Tag": "octrrmonthly",
+     "Type": 2
+    },
+    {
+     "Tag": "nomp",
+     "Type": 0
+    },
+    {
+     "Tag": "rrstudio",
+     "Type": 2
+    }
+   ],
+   "PromoImages": [],
+   "PromoExternalContent": [],
+   "LoadScreens": [],
+   "Roles": [],
+   "Badges": [],
+   "BoostCount": 0,
+   "CurrentSnapshotId": null,
+   "CCU": null,
+   "RestrictedCircuitsAllowListNames": [],
+   "IsJuniorCreated": false,
+   "IsPlacePlay": false
+  },
   "11988799": {
    "RoomId": 11988799,
    "Name": "TheBackroomsAllSeeing",
@@ -9360,6 +9491,7 @@
   "ruinsofstonefall": "649924194922273060",
   "theblackcat": 64899011,
   "bladeball": "8581927384148145199",
-  "thebackroomsallseeing": 11988799
+  "thebackroomsallseeing": 11988799,
+  "dormroompvp": 619605
  }
 }

@@ -7,7 +7,7 @@
 #   ./run.sh [screen|vr]      (default: screen)
 set -u
 MODE="${1:-screen}"
-UWU=/home/bloink/UwUNet
+UWU=/home/bloink/Work/UwUNet
 BUILD="$UWU/client2025/depot"
 STEAM=~/.local/share/Steam
 PROTON="$STEAM/steamapps/common/Proton - Experimental"
