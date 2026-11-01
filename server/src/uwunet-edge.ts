@@ -525,6 +525,33 @@ const rroData = readStatic("rro-rooms.json", { rooms: {}, byName: {} }) as {
 const rroRoomById = (id: number | string): Record<string, unknown> | undefined => rroData.rooms[unwrapId(String(id))];
 const rroRoomIdByName = (name: string): number | string | undefined => rroData.byName[name.toLowerCase()];
 
+// Scene persistence versions the client can't load. 227 is the first version saved after the
+// 20250718 build (a format break — the reference's MIN_UNLOADABLE_PERSISTENCE_VERSION), and a
+// room that ADVERTISES one (room-level PersistenceVersion/UgcSubVersion, e.g. Backrooms' 229) is
+// refused client-side as "needs a newer Rec Room" before any subroom loads. Clamp each ported
+// room to its newest loadable save, and hide the CurrentSave of any subroom saved past the cap —
+// that subroom loads its baked scene instead of failing the whole room. UWU_MAX_PERSISTENCE_VERSION
+// raises the cap (0 = off) for a newer client.
+const MAX_PERSISTENCE_VERSION = Number(process.env.UWU_MAX_PERSISTENCE_VERSION ?? 226);
+if (MAX_PERSISTENCE_VERSION > 0) {
+  for (const room of Object.values(rroData.rooms)) {
+    if (!(Number(room.PersistenceVersion) > MAX_PERSISTENCE_VERSION)) continue;
+    let newest = 0;
+    const hidden: string[] = [];
+    for (const sr of Array.isArray(room.SubRooms) ? (room.SubRooms as Record<string, unknown>[]) : []) {
+      const v = Number((sr.CurrentSave as Record<string, unknown> | null)?.PersistenceVersion ?? 0);
+      if (v > MAX_PERSISTENCE_VERSION) {
+        sr.CurrentSave = null;
+        hidden.push(String(sr.Name));
+      } else newest = Math.max(newest, v);
+    }
+    room.PersistenceVersion = newest;
+    if (room.UgcSubVersion != null) room.UgcSubVersion = newest;
+    if (room.MinUgcSubVersion != null) room.MinUgcSubVersion = Math.min(Number(room.MinUgcSubVersion), newest);
+    console.log(`[uwunet] ${room.Name}: persistence clamped to ${newest}${hidden.length ? `; saves past ${MAX_PERSISTENCE_VERSION} hidden: ${hidden.join(", ")}` : ""}`);
+  }
+}
+
 // RRO ownership: make one account the Creator/owner of every first-party room, so they show
 // as that player's rooms and that account can manage/build them. Resolved from the DB by
 // username or display name (default "sonakrie"), or forced with UWU_RRO_OWNER_ID. Applied to

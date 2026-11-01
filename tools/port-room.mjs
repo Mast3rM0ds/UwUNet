@@ -6,6 +6,7 @@
 //   node tools/port-room.mjs --list-shards         index progress / coverage report
 //   node tools/port-room.mjs --index-bundles       build the Rec Room Studio bundle index
 //   node tools/port-room.mjs --studio [RoomName]   attach Studio bundles to registered rooms
+//   node tools/port-room.mjs --holotars [RoomName] recover Holotar recordings of registered rooms
 //
 // Pipeline for `<RoomName>`:
 //   1. Wayback CDX: find a 200 snapshot of https://rec.net/room/<RoomName>
@@ -17,6 +18,8 @@
 //   4b. Rec Room Studio subrooms (CurrentSave.UnityAssetId): find the Windows build of the scene
 //      bundle + its dependencies in the recroom-cdn-assetbundle-* index (--index-bundles, once),
 //      download them into server/fixtures/room/ and record them on CurrentSave.UnitySubAssets
+//   4c. Holotar recordings: every "<key>.htr" a downloaded scene blob names, from the
+//      recroom-cdn-htr-* shards into server/fixtures/data/ (the client's cdn.rec.net/data/)
 //   5. Room image (img.rec.net/<ImageName>) from Wayback into server/fixtures/
 //   6. Register the room in server/static/rro-rooms.json (ids left as raw digit literals —
 //      quoteBigLiterals in the edge keeps them lossless) + byName
@@ -47,6 +50,8 @@ const UA = "Mozilla/5.0 (X11; Linux x86_64) UwUNet-porter/1.0";
 const sha256b64 = (buf) => crypto.createHash("sha256").update(buf).digest("base64");
 
 const bundleIndexDir = path.join(ROOT, "data", "porter", "bundles");
+const htrIndexFile = path.join(ROOT, "data", "porter", "htr-index.json");
+const dataFixtures = path.join(fixturesDir, "data"); // cdn.rec.net/data/<key> (Holotar recordings)
 
 async function get(url, { raw = false, retries = 3 } = {}) {
 	for (let i = 0; i < retries; i++) {
@@ -802,6 +807,60 @@ async function attachStudioBundles(dto) {
 	}
 }
 
+// ---------- step 4c: Holotar recordings ----------
+// A room's scene blob names each Holotar projector's recording by key ("<key>.htr"); the client
+// downloads it from cdn.rec.net/data/<key>.htr (the reference cdn worker's /data/ prefix), so a
+// missing file is a silent holotar AND its voice track. recroom-cdn-htr-* holds the archived
+// recordings under their real keys — the 32-hex keys only: the older 25-char base36 keys were
+// never captured. Recovered files go to server/fixtures/data/, which the edge serves as-is.
+const HTR_REF = /(?<![0-9A-Za-z])([0-9a-z]{25}|[0-9a-f]{32})\.htr/g;
+
+async function loadHtrIndex() {
+	if (existsSync(htrIndexFile)) return JSON.parse(readFileSync(htrIndexFile, "utf8"));
+	const idx = { shards: {} };
+	for (const shard of await listItems("recroom-cdn-htr", "recroom-cdn-htr-")) {
+		const zip = (await listShardZips(shard)).sort().pop();
+		const { keys } = await cdKeys(shard, zip);
+		idx.shards[shard] = { zip, keys: keys.filter((k) => k.endsWith(".htr")) };
+		console.log(`  holotar index: ${shard} (${idx.shards[shard].keys.length} recordings)`);
+	}
+	mkdirSync(path.dirname(htrIndexFile), { recursive: true });
+	writeFileSync(htrIndexFile, JSON.stringify(idx));
+	return idx;
+}
+
+async function attachHolotars(dto) {
+	const refs = new Set();
+	for (const sr of dto.SubRooms ?? []) {
+		const blob = sr.CurrentSave?.DataBlob;
+		const file = blob ? path.join(roomFixtures, blob) : null;
+		if (file && existsSync(file)) for (const m of readFileSync(file).toString("latin1").matchAll(HTR_REF)) refs.add(m[0]);
+	}
+	if (!refs.size) return;
+	const idx = await loadHtrIndex();
+	const where = new Map();
+	for (const [shard, { zip, keys }] of Object.entries(idx.shards)) for (const k of keys) where.set(k, { shard, zip });
+	let have = 0;
+	const lost = [];
+	for (const key of refs) {
+		const file = path.join(dataFixtures, key);
+		if (existsSync(file)) {
+			have++;
+			continue;
+		}
+		const loc = where.get(key);
+		if (!loc) {
+			lost.push(key);
+			continue;
+		}
+		const buf = await downloadBlob(loc.shard, loc.zip, key);
+		mkdirSync(dataFixtures, { recursive: true });
+		writeFileSync(file, buf);
+		have++;
+	}
+	console.log(`  holotars: ${have}/${refs.size} recordings in server/fixtures/data/${lost.length ? ` — ${lost.length} never archived (e.g. ${lost[0]}): those projectors stay silent` : ""}`);
+}
+
 // ---------- step 5: room image from wayback ----------
 async function fetchImage(imageName) {
 	try {
@@ -917,6 +976,7 @@ async function port(name) {
 	if (roomsList.length) console.log(`! ${roomsList.join(", ")} — sha256 mismatches, registration aborted`);
 	else console.log(`✓ ${ok}/${(dto.SubRooms ?? []).length} blobs hash-verified`);
 	if (roomsList.length) process.exit(1);
+	await attachHolotars(dto);
 
 	// register in rro-rooms.json
 	const rroPath = path.join(staticDir, "rro-rooms.json");
@@ -989,10 +1049,24 @@ async function studio(names) {
 	console.log(`✓ rro-rooms.json updated (${rooms.length} rooms) — RESTART the edge to serve the bundles`);
 }
 
+// node tools/port-room.mjs --holotars [RoomName ...] — recover the Holotar recordings of rooms
+// already registered (every room when none is named). Files land in server/fixtures/data/,
+// served live — no edge restart.
+async function holotars(names) {
+	const rro = readJson(path.join(staticDir, "rro-rooms.json"), { rooms: {}, byName: {} });
+	const want = names.map((n) => n.toLowerCase());
+	for (const room of Object.values(rro.rooms)) {
+		if (want.length && !want.includes(String(room.Name).toLowerCase())) continue;
+		console.log(`→ ${room.Name}`);
+		await attachHolotars(room);
+	}
+}
+
 const args = process.argv.slice(2);
 if (args[0] === "--index") await buildIndex();
 else if (args[0] === "--index-bundles") await buildBundleIndex(args.slice(1).filter((a, i, all) => a.startsWith("recroom-") && all[i - 1] !== "--jobs"));
 else if (args[0] === "--studio") await studio(args.slice(1));
+else if (args[0] === "--holotars") await holotars(args.slice(1));
 else if (args[0] === "--list-shards") console.log(JSON.stringify(await loadIndex(), null, 1));
 else if (args[0]) await port(args[0].replace(/^.*\/room\//, ""));
 else {
@@ -1001,5 +1075,6 @@ else {
 	console.log("       node tools/port-room.mjs --list-shards");
 	console.log("       node tools/port-room.mjs --index-bundles [shard ...] [--jobs N]   (Studio bundle index)");
 	console.log("       node tools/port-room.mjs --studio [RoomName ...]   (attach Studio bundles to registered rooms)");
+	console.log("       node tools/port-room.mjs --holotars [RoomName ...] (recover Holotar recordings of registered rooms)");
 	process.exit(1);
 }

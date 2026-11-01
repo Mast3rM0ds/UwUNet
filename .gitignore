@@ -5,9 +5,13 @@ certs/
 
 # === Personal data & runtime state (SteamID, tokens, harvested traffic) ===
 data/
+# ...but not the cdn.rec.net/data/ fixtures (Holotar recordings the edge serves)
+!server/fixtures/data/
 
 # === Large binary / downloaded / third-party trees ===
 client2025/depot/
+client2026/depot/
+client2026/logs/
 tools/
 re/dumps/
 re/deco/
