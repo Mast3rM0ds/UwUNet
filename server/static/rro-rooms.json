@@ -3017,7 +3017,16 @@
       "SavedOnDeviceClass": 2,
       "Description": "",
       "ModerationState": 0,
-      "CreatedAt": "2024-07-01T16:53:02.2058789Z"
+      "CreatedAt": "2024-07-01T16:53:02.2058789Z",
+      "UnitySubAssets": [
+       {
+        "UnityAssetId": "22555d14-2918-43f3-94d4-da0c893d96c4",
+        "Target": 0,
+        "Version": 3,
+        "Filename": "22555d14291843f394d4da0c893d96c4.SubRoom.Main.0.3.assetbundle",
+        "Hash": "z4TZGz320EVf2z1KwjvSkQhl0BnwXCYIuRtcE64AtLE="
+       }
+      ]
      }
     }
    ]
@@ -3206,7 +3215,8 @@
       "Description": "",
       "ModerationState": 2,
       "CreatedAt": "2025-02-07T16:05:44.8503711Z",
-      "ReferencedUnityAssetIds": []
+      "ReferencedUnityAssetIds": [],
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9792,7 +9802,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "",
       "ModerationState": 2,
-      "CreatedAt": "2023-10-25T23:32:45.6757883Z"
+      "CreatedAt": "2023-10-25T23:32:45.6757883Z",
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9823,7 +9834,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "",
       "ModerationState": 2,
-      "CreatedAt": "2023-10-21T22:57:43.3244393Z"
+      "CreatedAt": "2023-10-21T22:57:43.3244393Z",
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9855,7 +9867,15 @@
       "Description": "Fixed AFK",
       "ModerationState": 2,
       "CreatedAt": "2024-01-01T01:53:27.9164142Z",
-      "UnityAsset": "4397304e27cc4a259988d9a24acf4833.SubRoom.Main.2.5.assetbundle"
+      "UnitySubAssets": [
+       {
+        "UnityAssetId": "4397304e-27cc-4a25-9988-d9a24acf4833",
+        "Target": 2,
+        "Version": 5,
+        "Filename": "4397304e27cc4a259988d9a24acf4833.SubRoom.Main.2.5.assetbundle",
+        "Hash": "sd+4n8Q9VF/4HOdQ2Jqylexym3/5FdRCbBZhAP6phRE="
+       }
+      ]
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9886,7 +9906,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "POSSIBLE KEY FIX",
       "ModerationState": 2,
-      "CreatedAt": "2023-10-29T16:40:12.829688Z"
+      "CreatedAt": "2023-10-29T16:40:12.829688Z",
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9918,7 +9939,15 @@
       "Description": "",
       "ModerationState": 2,
       "CreatedAt": "2024-02-28T16:29:43.5257948Z",
-      "UnityAsset": "abc63a37317f43d094be8d11d5bf0fd6.SubRoom.Main.2.5.assetbundle"
+      "UnitySubAssets": [
+       {
+        "UnityAssetId": "abc63a37-317f-43d0-94be-8d11d5bf0fd6",
+        "Target": 2,
+        "Version": 5,
+        "Filename": "abc63a37317f43d094be8d11d5bf0fd6.SubRoom.Main.2.5.assetbundle",
+        "Hash": "D50dQAlbJ/TVtv7Djkrio1uwt2KVEfbtsy5COnsZ7z4="
+       }
+      ]
      },
      "LastModeratedSaveModerationState": 2,
      "IsSandbox": true,
@@ -9949,7 +9978,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "Holy Bundle Leaving",
       "ModerationState": 2,
-      "CreatedAt": "2024-02-04T01:48:21.7429014Z"
+      "CreatedAt": "2024-02-04T01:48:21.7429014Z",
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 0,
      "IsSandbox": true,
@@ -9980,7 +10010,8 @@
       "SavedOnDeviceClass": 2,
       "Description": "new skybox",
       "ModerationState": 2,
-      "CreatedAt": "2024-02-15T14:40:20.8765353Z"
+      "CreatedAt": "2024-02-15T14:40:20.8765353Z",
+      "UnitySubAssets": []
      },
      "LastModeratedSaveModerationState": 0,
      "IsSandbox": true,

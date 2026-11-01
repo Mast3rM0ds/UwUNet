@@ -579,37 +579,48 @@ const rroSubRoomSave = (
   const save = sr?.CurrentSave;
   return save && typeof save === "object" ? (save as Record<string, unknown>) : undefined;
 };
+// Rec Room Studio bundles. A Studio save names its scene bundle by UnityAssetId; the porter
+// records the builds it recovered on CurrentSave.UnitySubAssets in the reference's stored-build
+// shape (unity-assets-db.ts BakedUnityAsset): { UnityAssetId, Target (0 Windows, 2 Android),
+// Version, Filename (downloaded as /room/<Filename> from server/fixtures/room/), Hash (base64
+// SHA-256) } — the main bundle (UnityAssetId == the save's) beside the bundles it depends on.
+type BakedUnityAsset = { UnityAssetId: string; Target: number; Version: number; Filename: string; Hash: string };
+const bakedAssets = (save: Record<string, unknown>): BakedUnityAsset[] =>
+  (Array.isArray(save.UnitySubAssets) ? (save.UnitySubAssets as Record<string, unknown>[]) : []).filter(
+    (a): a is BakedUnityAsset =>
+      typeof a?.UnityAssetId === "string" && typeof a.Filename === "string" && a.Filename !== "" && Number.isInteger(a.Target),
+  );
 // The save-detail projection (SubRoomDataSaveDetailDto) the client awaits before downloading the
 // scene blob. Field names, casing and ORDER mirror the reference's toSaveDetail exactly — a
 // missing/extra/mis-cased field is a fatal "Malformed Response" and the room won't load. The main
-// bundle is lifted to top-level UnityAsset; UnitySubAssets are the dependency bundles only
-// (filtered to the caller's target), which our maker-pen RROs don't carry, so [] in practice. The
-// load-bearing fields are DataBlob (the /room/{blob} scene key) + DataBlobHash.
+// bundle is lifted to top-level UnityAsset; UnitySubAssets are the dependency bundles only, on the
+// caller's target — listing the root again makes Unity load the same serialized files twice (room
+// error 8714). For a maker-pen save both are empty and the load-bearing fields are DataBlob (the
+// /room/{blob} scene key) + DataBlobHash.
 const subRoomSaveDetail = (
   save: Record<string, unknown>,
   target: number,
 ): Record<string, unknown> => {
-  const subAssets = (Array.isArray(save.UnitySubAssets) ? (save.UnitySubAssets as Record<string, unknown>[]) : [])
-    .filter((a) => Number(a.Target ?? 0) === target)
-    .map((a) => ({
-      UnityAssetId: (a.UnityAssetId as string) ?? null,
-      UnityAsset: (a.Filename as string) ?? (a.UnityAsset as string) ?? null,
-      UnityAssetHash: (a.Hash as string) ?? (a.UnityAssetHash as string) ?? null,
-    }));
-  const mainAsset = (save.UnityAsset as string) ?? null;
+  const rootId = typeof save.UnityAssetId === "string" ? save.UnityAssetId.toLowerCase() : null;
+  const builds = bakedAssets(save).filter((a) => a.Target === target);
+  const main = builds.find((a) => a.UnityAssetId.toLowerCase() === rootId) ?? null;
   // A save that names a Unity asset (UnityAssetId) the client must load as an asset bundle, yet
-  // for which we serve NO bundle (no main UnityAsset, no UnitySubAssets), is an impossible state
-  // the live service never sent: the client tries to resolve that asset, finds none, and aborts
-  // the room load (error 8715) BEFORE it ever downloads the scene DataBlob. Our first-party saves
-  // are maker-pen content carried entirely by DataBlob on the baked UnitySceneId, so when we can't
-  // back the asset we don't advertise it — null the id (key stays, matching the reference's
-  // maker-pen shape) so the client loads the baked scene + DataBlob only.
-  const assetBacked = subAssets.length > 0 || mainAsset !== null;
+  // for which we serve NO bundle, is an impossible state the live service never sent: the client
+  // tries to resolve that asset, finds none, and aborts the room load (error 8715) BEFORE it ever
+  // downloads the scene DataBlob. When we hold no build of the save's bundle for this target (not
+  // recovered, or only an Android / Unity 6 one) we don't advertise it — null the id (key stays,
+  // matching the reference's maker-pen shape) so the client loads the baked scene + DataBlob only.
+  const assetBacked = main !== null;
+  const subAssets = assetBacked
+    ? builds
+        .filter((a) => a.UnityAssetId.toLowerCase() !== rootId)
+        .map((a) => ({ UnityAssetId: a.UnityAssetId, UnityAsset: a.Filename, UnityAssetHash: a.Hash }))
+    : [];
   return {
     UnitySubAssets: subAssets,
     ReferencedUnityAssets: [],
-    UnityAsset: mainAsset,
-    UnityAssetHash: (save.UnityAssetHash as string) ?? null,
+    UnityAsset: main?.Filename ?? null,
+    UnityAssetHash: main?.Hash ?? null,
     SubRoomDataSaveId: Number(save.SubRoomDataSaveId) || 0,
     SubRoomId: Number(save.SubRoomId) || 0,
     UnityAssetId: assetBacked ? ((save.UnityAssetId as string) ?? null) : null,
@@ -2157,6 +2168,70 @@ route("GET", "/rooms/{roomId}/subrooms/{subRoomId}/saves", (c) => {
   c.send(200, SUBROOM_SAVES_PAGE);
 });
 
+// POST /unity_assets/baked/bulk — while loading a Studio room the client posts the unity asset ids
+// its saves name (form-encoded: `id` repeated, `target`, `version`; Studio's JSON body uses
+// unityAssetIds/target/version) and downloads each answered Filename from /room/. A BARE array
+// of BakedUnityAsset, one per asset with a build on that target, in the order asked; the version
+// is a preference (that build, else the newest). Anything we don't hold is left out — `[]`,
+// never a 404, exactly as the reference (lists rooms.app.ts / unity-assets-db.ts).
+const allBakedAssets = (() => {
+  let cache: BakedUnityAsset[] | null = null;
+  return () =>
+    (cache ??= Object.values(rroData.rooms).flatMap((room) =>
+      (Array.isArray(room.SubRooms) ? (room.SubRooms as Record<string, unknown>[]) : []).flatMap((sr) =>
+        sr.CurrentSave && typeof sr.CurrentSave === "object" ? bakedAssets(sr.CurrentSave as Record<string, unknown>) : [],
+      ),
+    ));
+})();
+route("POST", "/unity_assets/baked/bulk", (c) => {
+  let ids: unknown[] = [];
+  let target = Number.NaN;
+  let version = Number.NaN;
+  const body = (c.body || "").trim();
+  if (body.startsWith("{")) {
+    try {
+      const entries = Object.entries(JSON.parse(body) as Record<string, unknown>);
+      const pick = (re: RegExp) => entries.find(([k]) => re.test(k))?.[1];
+      const v = pick(/^(unityAssetIds|assetIds|ids)$/i);
+      ids = Array.isArray(v) ? v : [];
+      target = Number(pick(/^(unityAssetTarget|assetTarget|target)$/i) ?? 0);
+      version = Number(pick(/^(unityAssetVersion|assetVersion|version)$/i));
+    } catch { /* malformed -> [] */ }
+  } else {
+    const q = new URLSearchParams(body);
+    for (const [k, v] of c.query) q.append(k, v);
+    ids = [...q.getAll("id"), ...q.getAll("ids")].flatMap((v) => v.split(","));
+    target = Number.parseInt(q.get("target") ?? "", 10);
+    version = Number.parseInt(q.get("version") ?? "", 10);
+  }
+  if (!Number.isInteger(target)) return c.send(200, []);
+  const want = [...new Set(ids.filter((v): v is string => typeof v === "string").map((v) => v.trim().toLowerCase()).filter(Boolean))];
+  const best = new Map<string, BakedUnityAsset>();
+  const rank = (a: BakedUnityAsset) => (a.Version === version ? Number.MAX_SAFE_INTEGER : a.Version);
+  for (const a of allBakedAssets()) {
+    const id = a.UnityAssetId.toLowerCase();
+    if (a.Target !== target || !want.includes(id)) continue;
+    const cur = best.get(id);
+    if (!cur || rank(a) > rank(cur)) best.set(id, a);
+  }
+  c.send(200, want.flatMap((id) => {
+    const a = best.get(id);
+    return a ? [{ UnityAssetId: id, Target: a.Target, Version: a.Version, Filename: a.Filename, Hash: a.Hash }] : [];
+  }));
+});
+
+// An integer `unityAssetTarget` keeps only that target's builds on each current save's
+// UnitySubAssets (the reference's filterRoomUnityAssets). Copies — rroData stays whole.
+const roomForTarget = (room: Record<string, unknown>, target: number): Record<string, unknown> =>
+  !Array.isArray(room.SubRooms) ? room : {
+    ...room,
+    SubRooms: (room.SubRooms as Record<string, unknown>[]).map((sr) => {
+      const cs = sr.CurrentSave as Record<string, unknown> | null | undefined;
+      if (!cs || !Array.isArray(cs.UnitySubAssets)) return sr;
+      return { ...sr, CurrentSave: { ...cs, UnitySubAssets: bakedAssets(cs).filter((a) => a.Target === target) } };
+    }),
+  };
+
 // GET /rooms/{id} — during "preparing", the client fetches the full Room to build the scene
 // (subrooms, save). We serve the caller's dorm (roomId == their account id, set in matchmake).
 route("GET", "/rooms/**", (c) => {
@@ -2165,8 +2240,8 @@ route("GET", "/rooms/**", (c) => {
   const m = /^\/rooms\/(\d+)$/.exec(c.path);
   if (!m) return c.send(404, { Code: 404, Error: "no such room" });
   const id = m[1]; // string-exact: 64-bit room ids round as Numbers
-  const u = userById(id);
-  c.send(200, roomDtoFor(id));
+  const t = Number.parseInt(c.query.get("unityAssetTarget") ?? "", 10);
+  c.send(200, Number.isInteger(t) ? roomForTarget(roomDtoFor(id), t) : roomDtoFor(id));
 });
 
 // --- notify.rec.net (SignalR hub negotiate; the WS itself is not up yet) ---
