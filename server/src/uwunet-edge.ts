@@ -550,19 +550,30 @@ if (rroOwnerId !== null) {
 } else {
   console.log(`[uwunet] RRO owner "${RRO_OWNER_NAME}" not found in DB — RROs keep original ownership (set UWU_RRO_OWNER or UWU_RRO_OWNER_ID)`);
 }
-// An RRO's first subroom, as matchmaking needs it (scene = the baked UnitySceneId).
+// An RRO's subroom, as matchmaking needs it (scene = the baked UnitySceneId). `subRoomId` picks
+// which one (the client matchmakes into /room/{roomId}/{subRoomId} to walk through a subroom
+// door); unknown or unspecified falls back to the first, the room's default entrance. dataBlob
+// is the subroom's published scene (CurrentSave.DataBlob, else the legacy flat field) — the
+// reference's subRoomDataBlob.
 // Ids stay STRINGS end to end: ported room/subroom ids exceed 2^53 and Number round-trips
 // corrupt them.
 const rroSubRoom = (
   id: number | string,
-): { subRoomId: string; scene: string; name: string; maxCapacity: number } | undefined => {
+  subRoomId?: number | string,
+): { subRoomId: string; scene: string; dataBlob: string; name: string; maxCapacity: number } | undefined => {
   const dto = rroRoomById(id);
   if (!dto) return undefined;
-  const sr = ((Array.isArray(dto.SubRooms) ? (dto.SubRooms as Record<string, unknown>[])[0] : undefined) ??
+  const subs = Array.isArray(dto.SubRooms) ? (dto.SubRooms as Record<string, unknown>[]) : [];
+  const want = subRoomId === undefined ? undefined : unwrapId(String(subRoomId));
+  const sr = ((want === undefined ? undefined : subs.find((s) => unwrapId(String(s.SubRoomId)) === want)) ??
+    subs[0] ??
     {}) as Record<string, unknown>;
+  const save = sr.CurrentSave as Record<string, unknown> | undefined;
+  const blob = typeof save?.DataBlob === "string" && save.DataBlob !== "" ? save.DataBlob : sr.DataBlob;
   return {
     subRoomId: sr.SubRoomId !== undefined ? unwrapId(String(sr.SubRoomId)) : "1",
     scene: typeof sr.UnitySceneId === "string" ? (sr.UnitySceneId as string) : "",
+    dataBlob: typeof blob === "string" ? blob : "",
     name: typeof dto.Name === "string" ? (dto.Name as string) : `Room${id}`,
     maxCapacity: typeof sr.MaxPlayers === "number" ? (sr.MaxPlayers as number) : 16,
   };
@@ -1277,17 +1288,19 @@ route("POST", "/roominstance/**/reportjoinresult", (c) => c.empty());
 // Send the caller into a SHARED instance of a first-party room. Everyone who matchmakes into
 // the same room+subroom gets the same deterministic photonRoomId, so they land in the same
 // Photon room and see each other — that's how the Rec Center fills up. roomInstanceId is
-// stable per room and differs from the caller's dorm instance (their account id), which is
-// what the client keys a room transition off.
+// stable per room+subroom and differs from the caller's dorm instance (their account id) AND
+// from the room's other subrooms: the client keys a room transition off a changing
+// roomInstanceId, so walking through a subroom door into an instance with the same id hangs
+// the join. Subrooms are separate places — each gets its own instance and Photon room.
 const PUBLIC_INSTANCE_BASE = 500000;
 const publicRoomInstance = (roomId: number | string, subRoomId?: number | string) => {
-  const sr = rroSubRoom(roomId);
-  const sub = subRoomId ?? sr?.subRoomId ?? 1;
+  const sr = rroSubRoom(roomId, subRoomId);
+  const sub = sr?.subRoomId ?? "1"; // the RESOLVED subroom: an unknown id falls back to the first
   const region = photonRegion();
-  // Stable numeric instance id from the (possibly 64-bit) room id: a big id rounds as a
-  // float, so take it modulo a safe range as BigInt, then add the base as a plain Number.
+  // Stable numeric instance id from the (possibly 64-bit) room + subroom ids: a big id rounds
+  // as a float, so mix and reduce them as BigInt, then add the base as a plain Number.
   const instBase =
-    Number(BigInt(String(roomId)) % 9000000000n) + PUBLIC_INSTANCE_BASE;
+    Number((BigInt(unwrapId(String(roomId))) * 1000003n + BigInt(sub)) % 9000000000n) + PUBLIC_INSTANCE_BASE;
   // Wire typing: the matchmake instance's id fields are strict longs on the client. Small
   // ids convert to numbers; big (>2^53) ids ride the BIG sentinel and are unquoted into raw
   // digit literals by send().
@@ -1298,10 +1311,10 @@ const publicRoomInstance = (roomId: number | string, subRoomId?: number | string
   return {
     roomInstanceId: instBase,
     roomId: wireId(roomId),
-    subRoomId: wireId(sub ?? sr?.subRoomId ?? 1),
+    subRoomId: wireId(sub),
     roomInstanceType: 0, // Public
     location: sr?.scene ?? "",
-    dataBlob: "",
+    dataBlob: sr?.dataBlob ?? "",
     eventId: 0,
     clubId: 0,
     roomCode: "",
@@ -1346,11 +1359,14 @@ const sendMatchmake = (c: Ctx, errorCode: number, roomInstance: Record<string, u
 // POST /matchmake/room/{roomId}[/{subRoomId}] (+ the v2 spelling): enter an RRO / the Rec Center.
 // Room ids are kept as STRINGS through the lookup: ported ids exceed 2^53 and Number-parsing
 // them rounds them (649924194922273060 → ...280) — rroRoomById(String) would 404 the room.
+// The room segment may also be a room NAME (the reference resolves non-numeric keys by name).
 const roomMatchmake = (c: Ctx) => {
   if (!c.authUser) return c.send(401, {});
-  const m = /\/room\/(\d+)(?:\/(\d+))?$/.exec(c.path);
+  const m = /\/room\/([^/]+?)(?:\/(\d+))?$/.exec(c.path);
   if (!m) return sendMatchmake(c, 2, null); // 2 = couldn't resolve
-  const roomId = m[1];
+  let key = m[1];
+  try { key = decodeURIComponent(key); } catch { /* malformed escape: match it raw */ }
+  const roomId = /^\d+$/.test(key) ? key : String(rroRoomIdByName(key) ?? "");
   const subRoomId = m[2];
   if (!rroRoomById(roomId)) return sendMatchmake(c, 2, null); // not a room we serve
   const inst = publicRoomInstance(roomId, subRoomId);
