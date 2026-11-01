@@ -46,7 +46,9 @@ fi
 cd "$BUILD"
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM"
 export STEAM_COMPAT_DATA_PATH="$STEAM/steamapps/compatdata/471710"
-export SteamAppId=471710 SteamGameId=471710 PROTON_LOG=1
+# PROTON_LOG is opt-in (PROTON_LOG=1 ./run.sh): its +seh/+unwind tracing writes GBs per minute
+# on the 2026 build (Unity/IL2CPP exceptions) and slows the game to a crawl.
+export SteamAppId=471710 SteamGameId=471710 PROTON_LOG="${PROTON_LOG:-0}"
 [ -n "$PRELOAD" ] && export LD_PRELOAD="$PRELOAD"
 
 # Screen mode must not pre-init OpenVR (hangs at "GfxDevice: creating device client" —
@@ -63,14 +65,25 @@ if [ -f "$BOOTCFG" ]; then
   fi
 fi
 
-"$PROTON/proton" run "./Injector.exe" --check-install > "$LOG/injector-check.log" 2>&1 \
+# The injector runs via `runinprefix`, NOT `run`: `proton run` goes through Proton's steam.exe
+# wrapper, which always exits 0 (so a failed check or a timed-out --wait-ready went unnoticed and
+# the game started unpatched — Referee.dll then aborts it with c0000409 within seconds) and puts
+# the injector's console output in a window instead of the log. The game keeps `run` (Steam API).
+"$PROTON/proton" runinprefix "./Injector.exe" --check-install > "$LOG/injector-check.log" 2>&1 \
   || { echo "[!] Injector --check-install failed:"; cat "$LOG/injector-check.log"; exit 1; }
 echo "[run] starting Injector.exe"
-"$PROTON/proton" run "./Injector.exe" > "$LOG/injector.log" 2>&1 &
-"$PROTON/proton" run "./Injector.exe" --wait-ready >> "$LOG/injector.log" 2>&1 \
-  || { echo "[!] Injector never became ready — see $LOG/injector.log"; exit 1; }
+"$PROTON/proton" runinprefix "./Injector.exe" > "$LOG/injector.log" 2>&1 &
+INJECTOR=$!
+"$PROTON/proton" runinprefix "./Injector.exe" --wait-ready > "$LOG/injector-ready.log" 2>&1 \
+  || { echo "[!] Injector never became ready:"; cat "$LOG/injector.log" "$LOG/injector-ready.log"; exit 1; }
+# Readiness means it is about to poll; wait until it says so before starting the game, so Referee's
+# early arena seam is patched before its first dereference.
+for _ in $(seq 1 100); do grep -q 'Waiting for RecRoom.exe' "$LOG/injector.log" && break; sleep 0.1; done
+kill -0 "$INJECTOR" 2>/dev/null || { echo "[!] Injector exited:"; cat "$LOG/injector.log"; exit 1; }
 echo "[run] launching RecRoom.exe +forcemode:$MODE"
 "$PROTON/proton" run "./RecRoom.exe" "+forcemode:$MODE" > "$LOG/game.log" 2>&1 &
 GAME=$!
 echo "[run] watch: tail -f '$BUILD/2026patch.log'  (confirms patch attached)"
+echo "[run] attached when 2026patch.log shows '[Build] hooks enabled status=0'"
+echo "[run] do NOT Ctrl-C this script while playing: the game shares its process group. Quit from the game."
 wait $GAME 2>/dev/null || true

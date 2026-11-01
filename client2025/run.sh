@@ -56,7 +56,9 @@ fi
 cd "$BUILD"
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM"
 export STEAM_COMPAT_DATA_PATH="$STEAM/steamapps/compatdata/471710"
-export SteamAppId=471710 SteamGameId=471710 PROTON_LOG=1
+# PROTON_LOG is opt-in (PROTON_LOG=1 ./run.sh): its +seh/+unwind tracing writes GBs per minute
+# on the 2026 build (Unity/IL2CPP exceptions) and slows the game to a crawl.
+export SteamAppId=471710 SteamGameId=471710 PROTON_LOG="${PROTON_LOG:-0}"
 [ -n "$PRELOAD" ] && export LD_PRELOAD="$PRELOAD"
 
 # Rec Room forces OpenVR at ENGINE STARTUP via boot.config's xrsdk-pre-init-library line.
