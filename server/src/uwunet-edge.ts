@@ -1003,6 +1003,22 @@ const playerDto = (playerId: number, roomInstance: unknown = null) => ({
   experiments: null,
 });
 const selfPlayerId = (c: Ctx) => (c.authUser ? Number(c.authUser.Id) : 1000000);
+// The caller's client BUILD — the bare YYYYMMDD of its token's `rn.ver` (every point release of
+// a build is the same build; the reference's authedBuild). null with no/undecodable token.
+const callerBuild = (c: Ctx): number | null => {
+  const tok = c.req.headers.authorization?.startsWith("Bearer ") ? c.req.headers.authorization.slice(7) : "";
+  try {
+    const claims = JSON.parse(Buffer.from(tok.split(".")[1] ?? "", "base64url").toString("utf8"));
+    const build = Number.parseInt(String(claims["rn.ver"] ?? "").split(/[.-]/)[0], 10);
+    return Number.isInteger(build) ? build : null;
+  } catch {
+    return null;
+  }
+};
+// The 2026 client (20260323.14) reads a few endpoints in a new shape; the reference gates each on
+// `build >= 20260323`. Answering it the 2025 shape is a fatal "Malformed Response".
+const BUILD_2026 = 20260323;
+const is2026 = (c: Ctx) => (callerBuild(c) ?? 0) >= BUILD_2026;
 
 // Session LoginLock, recorded at /player/login and verified on each heartbeat. the reference's
 // login acks EMPTY (not a PlayerDto); the heartbeat returns the presence unless the posted
@@ -1702,9 +1718,19 @@ route("GET", "/api/CampusCard/v1/SignUpBonus", (c) =>
 // (the reference econ.app.ts POST "/api/CampusCard/v1/UpdateAndGetSubscription"; auth is
 // OPTIONAL there — a 401 would stall the client's load, so none is sent).
 route("POST", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
-// 2025 builds: the season read is a bare [] (the reference "/api/subscriptionseasons/v1/
-// seasons/current" serves [] to any build below 20260323 — ours is 20250718.01).
-route("GET", "/api/subscriptionseasons/v1/seasons/current", (c) => c.send(200, []));
+// The season read: a bare [] below build 20260323, an empty season object from it (the reference
+// "/api/subscriptionseasons/v1/seasons/current" — the 2026 client rejects the [] as malformed).
+route("GET", "/api/subscriptionseasons/v1/seasons/current", (c) =>
+  c.send(200, is2026(c)
+    ? {
+        SubscriptionSeasonId: "00000000-0000-0000-0000-000000000000",
+        Name: "",
+        ImageName: "",
+        StartAt: "0001-01-01T00:00:00Z",
+        NextSeasonStart: null,
+        Milestones: [],
+      }
+    : []));
 
 // --- images / chat privacy ---
 // The photo-tagging preference is ONE key in the player-settings bag, served as a BARE
@@ -2158,14 +2184,7 @@ route("GET", "/rooms/search", rroSearch);
 const FEATURED_ROOMS_VERSIONS: ReadonlySet<string> = new Set(["20250718"]);
 route("GET", "/rooms/featuredrooms/current", (c) => {
   if (!c.authUser) return c.send(401, { error: "Unauthorized" });
-  const tok = c.req.headers.authorization!.slice(7);
-  let claims: Record<string, unknown> = {};
-  try {
-    claims = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString("utf8"));
-  } catch {}
-  const raw = String(claims["rn.ver"] ?? "");
-  const version = raw.split(/[.-]/)[0] ?? "";
-  if (!FEATURED_ROOMS_VERSIONS.has(version)) {
+  if (!FEATURED_ROOMS_VERSIONS.has(String(callerBuild(c)))) {
     // 404 with NO body (c.notFound() in the reference).
     c.res.setHeader("content-length", "0");
     c.res.writeHead(404);
@@ -2656,6 +2675,27 @@ route("GET", "/econ/roomEconConfig/{roomId}", (c) => {
 });
 // CampusCard (RR+ subscription) — a non-subscriber gets an empty object.
 route("GET", "/api/CampusCard/v1/UpdateAndGetSubscription", (c) => c.send(200, {}));
+// Boot reads the 2026 client awaits (404s here fail its boot sequence: "An error occurred").
+// Shapes from the reference's accounts/commerce/econ apps.
+route("GET", "/parentalcontrol/me", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { accountId: Number(c.authUser.Id), disallowInAppPurchases: true });
+});
+route("GET", "/purchaseRestriction/isplayerrestricted", (c) => c.send(200, false));
+route("GET", "/api/consumables/v1/all", (c) => c.send(200, [])); // no consumable catalogue served
+route("GET", "/api/incentivizedreferrals/progress", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.send(200, { success: true, value: { ReferralsVerifiedCount: 0, PlayerReferralRewards: [] } });
+});
+// Telemetry drop-offs: never read. A single event answers {}, a batch [] (the client decodes a
+// list there — the reference datacollection.app.ts keeps the two apart deliberately).
+route("POST", "/data/event", (c) => c.send(200, {}));
+route("POST", "/data/events", (c) => c.send(200, []));
+// The owner setting an instance's matchmaking policy: accepted, not threaded into the instance.
+route("PUT", "/roominstance/{roomInstanceId}/matchpolicy", (c) => {
+  if (!c.authUser) return c.send(401, {});
+  c.empty();
+});
 
 // --- boot/PLAY peripherals (shapes from the reference server apps/api openapi.ts) ---
 // QuickPlay: a pending quick-play action; all-null = none pending. Checked on PLAY.
@@ -2776,7 +2816,8 @@ route("POST", "/api/relationships/v1/favorite", relFlag("fav", 1));
 route("POST", "/api/relationships/v1/unfavorite", relFlag("fav", 0));
 // Chat threads — none yet.
 route("GET", "/thread", (c) => c.send(200, []));
-route("GET", "/thread/party", (c) => c.send(200, {}));
+// Not in a party: {} below build 20260323, [] from it (the reference chat.app.ts noParty()).
+route("GET", "/thread/party", (c) => c.send(200, is2026(c) ? [] : {}));
 // Cached-login batch (plural) — like the singular, nothing linked -> empty list.
 route("POST", "/cachedlogin/forplatformids", (c) => c.send(200, []));
 // Store catalog (commerce) — empty = no SKUs for sale (store is empty but valid).
